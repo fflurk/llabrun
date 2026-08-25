@@ -951,12 +951,48 @@ def update_via_build(
     print()
 
 
+def interactive_wizard() -> Tuple[str, str]:
+    """Interactively guides the user through selecting installation method and GPU backend."""
+    print(f"\n{Col.BOLD}=== Engine Setup & Backend Selection ==={Col.RESET}")
+    print(f"1. Select Installation Method:")
+    print(f"  {Col.CYAN}[1]{Col.RESET} Lazy Mode: Download precompiled release (Fast, no compiler needed ⭐)")
+    print(f"  {Col.CYAN}[2]{Col.RESET} Source Build: Compile latest master with CMake + MSVC (Maximum optimization)")
+
+    while True:
+        m_choice = input("\nChoose [1-2] (default 1): ").strip() or "1"
+        if m_choice in ["1", "2"]:
+            break
+    mode = "release" if m_choice == "1" else "build"
+
+    print(f"\n2. Select GPU Backend:")
+    print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU ⭐)")
+    print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Intel Arc / AMD / Universal)")
+    if mode == "build":
+        print(f"  {Col.CYAN}[3]{Col.RESET} Hybrid (CUDA + Vulkan — Dual NVIDIA & Intel Arc)")
+
+    max_c = "3" if mode == "build" else "2"
+    while True:
+        b_choice = input(f"\nChoose [1-{max_c}] (default 1): ").strip() or "1"
+        if b_choice in ["1", "2", "3"] and (mode == "build" or b_choice != "3"):
+            break
+
+    backend_map = {"1": "cuda", "2": "vulkan", "3": "hybrid"}
+    backend = backend_map[b_choice]
+    return mode, backend
+
+
 # ── Main Entrypoint & Interactive Menu ─────────────────────────────────────
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Update or build llama.cpp (Windows CUDA / Vulkan / Hybrid) with Lazy Release and Optimized Source modes."
+        description="llabrun: High-performance llama.cpp Engine Builder & Updater for Windows (CUDA / Vulkan / Hybrid)",
+        formatter_class=argparse.RawTextHelpFormatter
     )
+
     group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--update", dest="mode_update", action="store_true",
+        help="Update engine using saved configuration (runs setup wizard if first time)."
+    )
     group.add_argument(
         "--download", "--release", dest="mode_download", action="store_true",
         help="Lazy Mode: Download official prebuilt GitHub release binaries (Zero compiler required)."
@@ -964,6 +1000,10 @@ def main() -> None:
     group.add_argument(
         "--build", "--source", dest="mode_build", action="store_true",
         help="Full Optimized Mode: Compile latest master with CMake + MSVC + (CUDA / Vulkan / Hybrid)."
+    )
+    group.add_argument(
+        "--config", "--reconfigure", dest="mode_config", action="store_true",
+        help="Open interactive setup wizard to switch mode or backend."
     )
     group.add_argument(
         "--doctor", "--check-prereqs", dest="mode_doctor", action="store_true",
@@ -1017,17 +1057,16 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Load last build metadata
+    # Load saved build metadata
     last_info = load_build_info()
     last_backend = last_info.get("backend", "cuda")
     last_mode = last_info.get("mode", "release")
     last_ver = last_info.get("version")
 
-    # Check if user specified backend explicitly or if we have a saved state
     has_explicit_backend = bool(args.flag_vulkan or args.flag_hybrid or args.backend)
-    has_saved_backend = bool(BUILD_INFO_FILE.exists() and last_info.get("backend"))
+    has_saved_state = bool(BUILD_INFO_FILE.exists() and last_info.get("backend"))
 
-    # Determine effective backend (CLI flag overrides saved state)
+    # Determine effective backend
     if args.flag_vulkan:
         backend = "vulkan"
     elif args.flag_hybrid:
@@ -1046,10 +1085,24 @@ def main() -> None:
         rollback()
         return
 
+    if args.mode_config:
+        mode, backend = interactive_wizard()
+        if mode == "release":
+            update_via_release(
+                tag=args.tag, cuda_ver=args.cuda, backend=backend, sync_source=args.sync_source,
+                force=args.force, no_backup=args.no_backup, no_diff=args.no_diff
+            )
+        else:
+            update_via_build(
+                backend=backend, all_targets=args.all_targets, force=args.force,
+                no_backup=args.no_backup, no_diff=args.no_diff
+            )
+        return
+
     if args.mode_download:
-        if not has_explicit_backend and not has_saved_backend:
-            print(f"\n{Col.BOLD}First-time release download detected! Select your target GPU backend:{Col.RESET}")
-            print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU only ⭐)")
+        if not has_explicit_backend and not has_saved_state:
+            print(f"\n{Col.BOLD}First-time release download detected! Select target backend:{Col.RESET}")
+            print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU ⭐)")
             print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Intel Arc / AMD / Universal)")
             while True:
                 d_choice = input("\nChoose [1-2] (default 1): ").strip() or "1"
@@ -1067,9 +1120,9 @@ def main() -> None:
         return
 
     if args.mode_build:
-        if not has_explicit_backend and not has_saved_backend:
-            print(f"\n{Col.BOLD}First-time source build detected! Select your target GPU backend:{Col.RESET}")
-            print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU only ⭐)")
+        if not has_explicit_backend and not has_saved_state:
+            print(f"\n{Col.BOLD}First-time source build detected! Select target backend:{Col.RESET}")
+            print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU ⭐)")
             print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Intel Arc / AMD / Universal)")
             print(f"  {Col.CYAN}[3]{Col.RESET} Hybrid (CUDA + Vulkan — Dual NVIDIA & Intel Arc)")
             while True:
@@ -1084,74 +1137,68 @@ def main() -> None:
         )
         return
 
-    # Interactive menu if no mode specified
-    default_choice = "1"
-    if last_mode == "release":
-        default_choice = "1" if last_backend == "cuda" else "2"
-    elif last_mode == "build":
-        if last_backend == "cuda":
-            default_choice = "3"
-        elif last_backend == "vulkan":
-            default_choice = "4"
-        elif last_backend == "hybrid":
-            default_choice = "5"
+    # If first run with no saved state and no mode flags -> run wizard
+    if not has_saved_state:
+        print(f"\n{Col.BOLD}llabrun — llama.cpp Engine Builder & Updater{Col.RESET}")
+        print(f"No existing installation detected. Let's configure your engine setup:")
+        mode, backend = interactive_wizard()
+        if mode == "release":
+            update_via_release(
+                tag=args.tag, cuda_ver=args.cuda, backend=backend, sync_source=args.sync_source,
+                force=args.force, no_backup=args.no_backup, no_diff=args.no_diff
+            )
+        else:
+            update_via_build(
+                backend=backend, all_targets=args.all_targets, force=args.force,
+                no_backup=args.no_backup, no_diff=args.no_diff
+            )
+        return
 
-    mode_labels = {
-        "1": "Lazy Release (CUDA / NVIDIA)",
-        "2": "Lazy Release (Vulkan / Intel Arc / AMD)",
-        "3": "Source Build (CUDA / NVIDIA)",
-        "4": "Source Build (Vulkan / Intel Arc)",
-        "5": "Source Build Hybrid (CUDA + Vulkan)"
-    }
+    # Second run & beyond: Compact unified interactive menu
+    mode_display = "Lazy Release" if last_mode == "release" else "Source Build"
+    backend_display = backend.upper()
+    if backend == "hybrid":
+        backend_display = "Hybrid (CUDA + Vulkan)"
 
     print(f"\n{Col.BOLD}llabrun — llama.cpp Engine Builder & Updater{Col.RESET}")
-    if last_ver:
-        _print_safe(f"  {Col.DIM}Currently Installed:{Col.RESET} {Col.BOLD}{last_ver}{Col.RESET} [{mode_labels.get(default_choice, 'Custom')}]")
+    _print_safe(f"  {Col.DIM}Current Engine:{Col.RESET} {Col.BOLD}{last_ver or 'installed'}{Col.RESET} [{mode_display}: {backend_display}]")
 
-    print(f"  {Col.CYAN}[1]{Col.RESET} Lazy Mode: Download latest {Col.BOLD}CUDA{Col.RESET} release (NVIDIA ⭐)")
-    print(f"  {Col.CYAN}[2]{Col.RESET} Lazy Mode: Download latest {Col.BOLD}Vulkan{Col.RESET} release (Intel Arc / AMD / Universal)")
-    print(f"  {Col.CYAN}[3]{Col.RESET} Full Optimized Mode: Build from source with {Col.BOLD}CUDA{Col.RESET} (NVIDIA)")
-    print(f"  {Col.CYAN}[4]{Col.RESET} Full Optimized Mode: Build from source with {Col.BOLD}Vulkan{Col.RESET} (Intel Arc / Universal)")
-    print(f"  {Col.CYAN}[5]{Col.RESET} Full Optimized Mode: Build {Col.BOLD}Hybrid (CUDA + Vulkan){Col.RESET} from source")
-    print(f"  {Col.CYAN}[6]{Col.RESET} System Diagnostics & Prerequisites (Doctor)")
-    print(f"  {Col.CYAN}[7]{Col.RESET} Rollback to previous binary backup")
+    print(f"\n  {Col.CYAN}[1]{Col.RESET} Update Engine ({mode_display}: {Col.BOLD}{backend_display}{Col.RESET}) ⭐ {Col.DIM}[Press Enter]{Col.RESET}")
+    print(f"  {Col.CYAN}[2]{Col.RESET} Reconfigure Engine (Switch between Lazy / Source / CUDA / Vulkan / Hybrid)")
+    print(f"  {Col.CYAN}[3]{Col.RESET} System Diagnostics & Prerequisites (Doctor)")
+    print(f"  {Col.CYAN}[4]{Col.RESET} Rollback to previous binary backup")
 
     while True:
-        prompt_suffix = f" (default [{default_choice}] {mode_labels.get(default_choice, '')})" if last_ver else ""
-        choice = input(f"\nChoose [1-7]{prompt_suffix}: ").strip()
-        if not choice and last_ver:
-            choice = default_choice
-        if choice in ["1", "2", "3", "4", "5", "6", "7"]:
+        choice = input("\nChoose [1-4] (default [1]): ").strip() or "1"
+        if choice in ["1", "2", "3", "4"]:
             break
 
     if choice == "1":
-        update_via_release(
-            tag=args.tag, cuda_ver=args.cuda, backend="cuda", sync_source=args.sync_source,
-            force=args.force, no_backup=args.no_backup, no_diff=args.no_diff
-        )
+        if last_mode == "release":
+            update_via_release(
+                tag=args.tag, cuda_ver=args.cuda, backend=backend, sync_source=args.sync_source,
+                force=args.force, no_backup=args.no_backup, no_diff=args.no_diff
+            )
+        else:
+            update_via_build(
+                backend=backend, all_targets=args.all_targets, force=args.force,
+                no_backup=args.no_backup, no_diff=args.no_diff
+            )
     elif choice == "2":
-        update_via_release(
-            tag=args.tag, cuda_ver=args.cuda, backend="vulkan", sync_source=args.sync_source,
-            force=args.force, no_backup=args.no_backup, no_diff=args.no_diff
-        )
+        mode, backend = interactive_wizard()
+        if mode == "release":
+            update_via_release(
+                tag=args.tag, cuda_ver=args.cuda, backend=backend, sync_source=args.sync_source,
+                force=args.force, no_backup=args.no_backup, no_diff=args.no_diff
+            )
+        else:
+            update_via_build(
+                backend=backend, all_targets=args.all_targets, force=args.force,
+                no_backup=args.no_backup, no_diff=args.no_diff
+            )
     elif choice == "3":
-        update_via_build(
-            backend="cuda", all_targets=args.all_targets, force=args.force,
-            no_backup=args.no_backup, no_diff=args.no_diff
-        )
-    elif choice == "4":
-        update_via_build(
-            backend="vulkan", all_targets=args.all_targets, force=args.force,
-            no_backup=args.no_backup, no_diff=args.no_diff
-        )
-    elif choice == "5":
-        update_via_build(
-            backend="hybrid", all_targets=args.all_targets, force=args.force,
-            no_backup=args.no_backup, no_diff=args.no_diff
-        )
-    elif choice == "6":
         check_prerequisites()
-    elif choice == "7":
+    elif choice == "4":
         rollback()
 
 

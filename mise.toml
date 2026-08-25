@@ -10,8 +10,8 @@ description = "Launch interactive model runner and OpenAI-compatible API server"
 run = "uv run python llama_runner.py"
 
 [tasks.update]
-description = "Update llama.cpp engine via Lazy Mode precompiled release download"
-run = "uv run python update_llama.py --download"
+description = "Update llama.cpp engine (runs setup wizard on 1st run, auto-updates on subsequent runs)"
+run = "uv run python update_llama.py"
 
 [tasks.build]
 description = "Compile llama.cpp from source with CMake + MSVC (CUDA, Vulkan, or Hybrid)"
