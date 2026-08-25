@@ -1960,18 +1960,33 @@ def main() -> int:
 
     if action == 'last':
         print(f"\n🚀 Quick-Starting last configuration: {last_run.get('variant')}...")
-        cfg = copy.deepcopy(last_run['cfg'])
-        # Dynamically apply the latest server settings from settings.json
-        if 'server' not in cfg:
-            cfg['server'] = {}
-        cfg['server'] = deep_merge(cfg['server'], settings.get('server', {}))
-        cfg['server']['port'] = args.base_port
+        config = load_runner_config(Path(args.presets_file) if args.presets_file else models_root.parent / 'presets.json', settings=settings)
+        fam_name = last_run.get('family', 'Generic')
+        base_cfg = family_baseline(fam_name, models_root, config=config)
+        base_cfg['server']['ui'] = True
 
-        # Dynamically apply latest engine_defaults (e.g. threads, batch size) as the base
-        if 'engine' in cfg and settings.get('engine_defaults'):
-            cfg['engine'] = deep_merge(settings.get('engine_defaults', {}), cfg['engine'])
+        # Identity
+        ident_data = {
+            'base_model': last_run.get('base_model', last_run.get('variant', 'Model')),
+            'family': fam_name,
+            'variant': last_run.get('variant', 'Model'),
+            'model_path': last_run.get('model_path', '')
+        }
+        base_cfg = deep_merge(base_cfg, {'identity': ident_data})
 
-        return start_server(server_path, cfg, args.base_port, out_dir, cfg.get('server', {}).get('log_prompts_dir'))
+        # Overrides from saved session
+        mmproj_path = last_run.get('cfg', {}).get('vision', {}).get('mmproj_path')
+        base_cfg = deep_merge(base_cfg, vision_override(last_run.get('vision', 'No'), mmproj_path, fam_name, config=config))
+        base_cfg = deep_merge(base_cfg, reasoning_override(fam_name, last_run.get('reasoning', 'Thinking (Natural / Medium - Recommended)'), config=config))
+        base_cfg = deep_merge(base_cfg, context_override(last_run.get('context', '65k')))
+        base_cfg = deep_merge(base_cfg, temp_override(last_run.get('temp_profile', 'Family Default')))
+        base_cfg = deep_merge(base_cfg, mtp_override(last_run.get('mtp', 'Off (Standard)')))
+
+        # Ensure active server port
+        base_cfg['server']['port'] = args.base_port
+
+        log_prompts_val = base_cfg.get('server', {}).get('log_prompts_dir')
+        return start_server(server_path, base_cfg, args.base_port, out_dir, log_prompts_val)
 
     if action == 'save_last':
         default_label = f"{last_run.get('variant')} ({last_run.get('context', 'default')})"
