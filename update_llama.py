@@ -993,7 +993,7 @@ def run_cmake_cmd(cmd_list: List[str], cwd: Path) -> None:
 
 
 def build_llama_from_source(backend: str = "cuda", all_targets: bool = False) -> None:
-    cmake_flags = ["cmake", "-B", "build", "-DBUILD_SHARED_LIBS=OFF"]
+    cmake_flags = ["cmake", "-B", "build", "-DBUILD_SHARED_LIBS=OFF", "-DLLAMA_BUILD_UI=ON"]
 
     if CURRENT_OS == "macos":
         cmake_flags.append("-DGGML_METAL=ON")
