@@ -501,6 +501,14 @@ def build_args(cfg: Dict[str, Any], port: int) -> List[str]:
     elif os.environ.get('LLAMA_API_KEY'):
         args += ['--api-key', os.environ['LLAMA_API_KEY']]
 
+    # Device placement (Multi-GPU / Hybrid backends)
+    if eng.get('device'):
+        args += ['--device', str(eng['device'])]
+    if vis.get('device') or eng.get('mmproj_device'):
+        args += ['--mmproj-device', str(vis.get('device') or eng.get('mmproj_device'))]
+    if eng.get('spec_draft_device'):
+        args += ['--spec-draft-device', str(eng['spec_draft_device'])]
+
     # Engine compute & KV cache options
     if eng.get('cache_type_k') and eng['cache_type_k'] != 'f16':
         args += ['--cache-type-k', eng['cache_type_k']]
