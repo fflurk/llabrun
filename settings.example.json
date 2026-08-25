@@ -6,7 +6,7 @@
     "host": "127.0.0.1",
     "port": 8080,
     "api_key": "",
-    "ui": false,
+    "ui": true,
     "metrics": true,
     "slots_endpoint": true,
     "timeout": 600,

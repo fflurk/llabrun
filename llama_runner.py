@@ -175,7 +175,7 @@ def resolve_template_file(filename: str, models_root: Path) -> str:
 def load_settings(settings_path: Optional[Path] = None) -> Dict[str, Any]:
     default_settings: Dict[str, Any] = {
         'server': {
-            'host': '127.0.0.1', 'port': 8080, 'api_key': '', 'ui': False,
+            'host': '127.0.0.1', 'port': 8080, 'api_key': '', 'ui': True,
             'metrics': True, 'slots_endpoint': True, 'timeout': 600, 'verbosity': 4, 'predict': -1
         },
         'paths': {
