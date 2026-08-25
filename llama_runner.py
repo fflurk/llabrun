@@ -1960,7 +1960,13 @@ def main() -> int:
 
     if action == 'last':
         print(f"\n🚀 Quick-Starting last configuration: {last_run.get('variant')}...")
-        return start_server(server_path, last_run['cfg'], args.base_port, out_dir, last_run.get('cfg', {}).get('server', {}).get('log_prompts_dir'))
+        cfg = copy.deepcopy(last_run['cfg'])
+        # Dynamically apply the latest server settings from settings.json
+        if 'server' not in cfg:
+            cfg['server'] = {}
+        cfg['server'] = deep_merge(cfg['server'], settings.get('server', {}))
+        cfg['server']['port'] = args.base_port
+        return start_server(server_path, cfg, args.base_port, out_dir, cfg.get('server', {}).get('log_prompts_dir'))
 
     if action == 'save_last':
         default_label = f"{last_run.get('variant')} ({last_run.get('context', 'default')})"
