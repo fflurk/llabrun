@@ -504,6 +504,10 @@ def build_args(cfg: Dict[str, Any], port: int) -> List[str]:
     # Device placement (Multi-GPU / Hybrid backends)
     if eng.get('device'):
         args += ['--device', str(eng['device'])]
+    if eng.get('split_mode'):
+        args += ['--split-mode', str(eng['split_mode'])]
+    if eng.get('tensor_split'):
+        args += ['--tensor-split', str(eng['tensor_split'])]
     if vis.get('device') or eng.get('mmproj_device'):
         args += ['--mmproj-device', str(vis.get('device') or eng.get('mmproj_device'))]
     if eng.get('spec_draft_device'):
