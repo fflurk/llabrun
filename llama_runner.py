@@ -1966,6 +1966,11 @@ def main() -> int:
             cfg['server'] = {}
         cfg['server'] = deep_merge(cfg['server'], settings.get('server', {}))
         cfg['server']['port'] = args.base_port
+
+        # Dynamically apply latest engine_defaults (e.g. threads, batch size) as the base
+        if 'engine' in cfg and settings.get('engine_defaults'):
+            cfg['engine'] = deep_merge(settings.get('engine_defaults', {}), cfg['engine'])
+
         return start_server(server_path, cfg, args.base_port, out_dir, cfg.get('server', {}).get('log_prompts_dir'))
 
     if action == 'save_last':
