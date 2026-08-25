@@ -1903,16 +1903,17 @@ def main() -> int:
         print(f"  Last Run: {last_var} [{last_ctx} | Vision: {last_vis} | MTP: {last_mtp}]")
         print('\n1. Select Action')
         print(f'[1] Quick Start: Run Last Configuration ({last_var}) ⭐ [Press Enter]')
-        print('[2] Start Server (Interactive Setup / Custom Model)')
-        print('[3] Start Server (Verified 1-Click Hardware Presets)')
-        print('[4] Run Benchmark (Automated evaluation loop)')
-        print('[5] Generate Router INI Presets')
-        print('[6] Download Models (from HuggingFace ⭐)')
+        print(f'[2] Save Last Run to Presets (presets.json)')
+        print('[3] Start Server (Interactive Setup / Custom Model)')
+        print('[4] Start Server (Verified 1-Click Hardware Presets)')
+        print('[5] Run Benchmark (Automated evaluation loop)')
+        print('[6] Generate Router INI Presets')
+        print('[7] Download Models (from HuggingFace ⭐)')
 
         while True:
-            action_raw = input('\nChoose [1-6] (default [1]): ').strip() or '1'
-            if action_raw in ['1', '2', '3', '4', '5', '6']:
-                action = {'1': 'last', '2': 'start', '3': 'preset', '4': 'benchmark', '5': 'router', '6': 'download'}[action_raw]
+            action_raw = input('\nChoose [1-7] (default [1]): ').strip() or '1'
+            if action_raw in ['1', '2', '3', '4', '5', '6', '7']:
+                action = {'1': 'last', '2': 'save_last', '3': 'start', '4': 'preset', '5': 'benchmark', '6': 'router', '7': 'download'}[action_raw]
                 break
     else:
         print('\n1. Select Action')
@@ -1931,6 +1932,32 @@ def main() -> int:
     if action == 'last':
         print(f"\n🚀 Quick-Starting last configuration: {last_run.get('variant')}...")
         return start_server(server_path, last_run['cfg'], args.base_port, out_dir, last_run.get('cfg', {}).get('server', {}).get('log_prompts_dir'))
+
+    if action == 'save_last':
+        default_label = f"{last_run.get('variant')} ({last_run.get('context', 'default')})"
+        preset_label = input(f'\nEnter preset label (default: "{default_label}"): ').strip() or default_label
+        clean_id = re.sub(r'[^a-zA-Z0-9_\-]', '-', last_run.get('variant', 'model').lower()).strip('-') + f"-{last_run.get('context', 'default').lower()}"
+        preset_item = {
+            'id': clean_id,
+            'category': 'Custom Presets',
+            'label': f'⭐ {preset_label}',
+            'match_family': last_run.get('family', ''),
+            'preferred_quants': [last_run.get('variant', '')],
+            'context': last_run.get('context', 'auto'),
+            'vision': last_run.get('vision', 'No'),
+            'reasoning': last_run.get('reasoning', 'Thinking'),
+            'temp_profile': last_run.get('temp_profile', 'Family Default'),
+            'mtp': last_run.get('mtp', 'Off')
+        }
+        target_presets_file = Path(args.presets_file) if args.presets_file else Path('presets.json')
+        save_preset_to_file(preset_item, target_presets_file)
+        print(f"  ✅ Saved preset '{preset_label}' to {target_presets_file.name}!")
+        print(f"  You can now launch it anytime directly from 1-Click Hardware Presets.\n")
+
+        launch_now = input(f"Launch {preset_label} now? [Y/n]: ").strip().lower()
+        if launch_now != 'n':
+            return start_server(server_path, last_run['cfg'], args.base_port, out_dir, last_run.get('cfg', {}).get('server', {}).get('log_prompts_dir'))
+        return 0
 
     if action == 'download':
         return download_models_interactive(models_root)
@@ -2179,28 +2206,6 @@ def main() -> int:
             'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
         }
         save_last_run(run_record)
-
-        # Offer to save configuration to presets.json
-        print()
-        save_pr_choice = input('Save this configuration to presets.json as a 1-click preset? [y/N]: ').strip().lower()
-        if save_pr_choice in ['y', 'yes']:
-            preset_label = input(f'Enter preset label (default: "{variant["variant"]} ({ctx})"): ').strip() or f'{variant["variant"]} ({ctx})'
-            clean_id = re.sub(r'[^a-zA-Z0-9_\-]', '-', variant['variant'].lower()).strip('-') + f'-{ctx.lower()}'
-            preset_item = {
-                'id': clean_id,
-                'category': 'Custom Presets',
-                'label': f'⭐ {preset_label}',
-                'match_family': variant['family'],
-                'preferred_quants': [variant['variant']],
-                'context': ctx,
-                'vision': vis_mode,
-                'reasoning': r_mode,
-                'temp_profile': t_prof,
-                'mtp': m_prof
-            }
-            target_presets_file = Path(args.presets_file) if args.presets_file else Path('presets.json')
-            save_preset_to_file(preset_item, target_presets_file)
-            print(f"  ✅ Saved preset '{preset_label}' to {target_presets_file.name}!")
 
         return start_server(server_path, resolved, port, out_dir, log_prompts_val)
 
