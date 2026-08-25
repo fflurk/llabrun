@@ -603,8 +603,6 @@ def build_args(cfg: Dict[str, Any], port: int) -> List[str]:
         args.append('--no-kv-unified')
     if eng.get('cache_idle_slots'):
         args.append('--cache-idle-slots')
-    if eng.get('cache_ram') is not None:
-        args += ['--cache-ram', str(eng['cache_ram'])]
     if eng.get('slot_prompt_similarity') is not None and eng['slot_prompt_similarity'] != 0.10:
         args += ['--slot-prompt-similarity', str(eng['slot_prompt_similarity'])]
     if eng.get('cont_batching') is False:
