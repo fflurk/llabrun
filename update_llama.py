@@ -41,6 +41,7 @@ SOURCE_DIR = Path("Source/llama.cpp")
 BIN_DIR = Path("bin")
 BACKUP_DIR = Path("bin_backup")
 VERSION_FILE = Path("bin/.llama_version")
+BUILD_INFO_FILE = Path("bin/.llama_build_info.json")
 HELP_BEFORE_FILE = Path("bin/.llama_help_snapshot.txt")
 CURL_EXE = r"C:\Windows\System32\curl.exe"  # Real Windows curl
 SERVER_EXE = BIN_DIR / "llama-server.exe"
@@ -127,6 +128,35 @@ def download_file(url: str, output_path: str) -> None:
 
 
 # ── Version & Snapshot Tracking ────────────────────────────────────────────
+def load_build_info() -> Dict[str, Any]:
+    if BUILD_INFO_FILE.exists():
+        try:
+            return json.loads(BUILD_INFO_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    ver = get_installed_version()
+    if ver:
+        return {
+            "version": ver,
+            "mode": "release" if ver.startswith("b") or ver.startswith("v") else "build",
+            "backend": "cuda",
+            "timestamp": "unknown"
+        }
+    return {}
+
+
+def save_build_info(version: str, mode: str, backend: str) -> None:
+    BUILD_INFO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "version": version,
+        "mode": mode,         # "release" or "build"
+        "backend": backend,   # "cuda", "vulkan", "hybrid"
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    BUILD_INFO_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    VERSION_FILE.write_text(version, encoding="utf-8")
+
+
 def get_installed_version() -> Optional[str]:
     if VERSION_FILE.exists():
         ver = VERSION_FILE.read_text(encoding="utf-8-sig").strip()
@@ -675,7 +705,7 @@ def update_via_release(
                 z.extractall(BIN_DIR)
 
     ok(f"Successfully extracted release {release_tag} ({backend_label}) into bin/")
-    VERSION_FILE.write_text(release_tag, encoding="utf-8")
+    save_build_info(release_tag, mode="release", backend=backend)
 
     # Capture help after & diff
     if not no_diff:
@@ -893,7 +923,7 @@ def update_via_build(
             rollback()
         sys.exit(1)
 
-    VERSION_FILE.write_text(new_sha, encoding="utf-8")
+    save_build_info(new_sha, mode="build", backend=backend)
 
     # Capture help after & diff
     if not no_diff:
@@ -945,8 +975,8 @@ def main() -> None:
     )
 
     parser.add_argument(
-        "--backend", type=str, choices=["cuda", "vulkan", "hybrid"], default="cuda",
-        help="Target acceleration backend: 'cuda' (NVIDIA default), 'vulkan' (Intel/AMD/Universal), or 'hybrid' (CUDA + Vulkan for source build)."
+        "--backend", type=str, choices=["cuda", "vulkan", "hybrid"], default=None,
+        help="Target acceleration backend: 'cuda', 'vulkan', or 'hybrid' (defaults to last configured backend)."
     )
     parser.add_argument(
         "--vulkan", dest="flag_vulkan", action="store_true",
@@ -987,12 +1017,21 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Determine effective backend
-    backend = args.backend
+    # Load last build metadata
+    last_info = load_build_info()
+    last_backend = last_info.get("backend", "cuda")
+    last_mode = last_info.get("mode", "release")
+    last_ver = last_info.get("version")
+
+    # Determine effective backend (CLI flag overrides saved state)
     if args.flag_vulkan:
         backend = "vulkan"
     elif args.flag_hybrid:
         backend = "hybrid"
+    elif args.backend:
+        backend = args.backend
+    else:
+        backend = last_backend
 
     # Direct flag dispatch
     if args.mode_doctor:
@@ -1021,7 +1060,29 @@ def main() -> None:
         return
 
     # Interactive menu if no mode specified
+    default_choice = "1"
+    if last_mode == "release":
+        default_choice = "1" if last_backend == "cuda" else "2"
+    elif last_mode == "build":
+        if last_backend == "cuda":
+            default_choice = "3"
+        elif last_backend == "vulkan":
+            default_choice = "4"
+        elif last_backend == "hybrid":
+            default_choice = "5"
+
+    mode_labels = {
+        "1": "Lazy Release (CUDA / NVIDIA)",
+        "2": "Lazy Release (Vulkan / Intel Arc / AMD)",
+        "3": "Source Build (CUDA / NVIDIA)",
+        "4": "Source Build (Vulkan / Intel Arc)",
+        "5": "Source Build Hybrid (CUDA + Vulkan)"
+    }
+
     print(f"\n{Col.BOLD}llabrun — llama.cpp Engine Builder & Updater{Col.RESET}")
+    if last_ver:
+        _print_safe(f"  {Col.DIM}Currently Installed:{Col.RESET} {Col.BOLD}{last_ver}{Col.RESET} [{mode_labels.get(default_choice, 'Custom')}]")
+
     print(f"  {Col.CYAN}[1]{Col.RESET} Lazy Mode: Download latest {Col.BOLD}CUDA{Col.RESET} release (NVIDIA ⭐)")
     print(f"  {Col.CYAN}[2]{Col.RESET} Lazy Mode: Download latest {Col.BOLD}Vulkan{Col.RESET} release (Intel Arc / AMD / Universal)")
     print(f"  {Col.CYAN}[3]{Col.RESET} Full Optimized Mode: Build from source with {Col.BOLD}CUDA{Col.RESET} (NVIDIA)")
@@ -1031,7 +1092,10 @@ def main() -> None:
     print(f"  {Col.CYAN}[7]{Col.RESET} Rollback to previous binary backup")
 
     while True:
-        choice = input("\nChoose [1-7]: ").strip()
+        prompt_suffix = f" (default [{default_choice}] {mode_labels.get(default_choice, '')})" if last_ver else ""
+        choice = input(f"\nChoose [1-7]{prompt_suffix}: ").strip()
+        if not choice and last_ver:
+            choice = default_choice
         if choice in ["1", "2", "3", "4", "5", "6", "7"]:
             break
 
