@@ -1797,6 +1797,13 @@ def start_server(server_path: Path, resolved: Dict[str, Any], port: int, out_dir
     ident = resolved_copy.get('identity', {})
     vis_cfg = resolved_copy.get('vision', {})
     has_auth = bool(resolved_copy.get('server', {}).get('api_key') or os.environ.get('LLAMA_API_KEY'))
+
+    # Validate model file existence
+    model_path_str = ident.get('model_path')
+    if model_path_str and not Path(model_path_str).exists():
+        print(f"\n[!] Error: Model file not found at: {model_path_str}")
+        return 1
+
     print(f'  Starting: {ident.get("variant", ident.get("family", "Model"))}')
     print(f'  Context: {ident.get("context_label", "default")} ({ident.get("context_tokens", "auto")})')
     print(f'  Vision: {vis_cfg.get("mode", "No")}')
@@ -2167,6 +2174,10 @@ def main() -> int:
                     return 1
             else:
                 prompt_text = prompt_input
+
+        if not prompt_text.strip():
+            prompt_text = "Explain the difference between mutable and immutable data structures in modern programming languages, with concrete code examples."
+            log(f"Using standard benchmark prompt ({len(prompt_text)} chars)")
 
     # ---- Action logic ----
     config = load_runner_config(Path(args.presets_file) if args.presets_file else models_root.parent / 'presets.json')
