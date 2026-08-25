@@ -483,6 +483,14 @@ def check_prerequisites() -> Dict[str, Any]:
     except Exception:
         pass
 
+    # Node.js / NPM (for embedded WebUI compilation)
+    try:
+        res = subprocess.run(["npm", "--version"], capture_output=True, text=True, shell=(CURRENT_OS == "windows"))
+        if res.returncode == 0 and res.stdout.strip():
+            status["node_npm"] = f"npm v{res.stdout.strip()}"
+    except Exception:
+        pass
+
     # Platform specific checks
     if CURRENT_OS == "macos":
         # Apple Silicon / CPU Brand
@@ -628,6 +636,7 @@ def check_prerequisites() -> Dict[str, Any]:
     p_line("Git", status["git"], True)
     p_line("CMake", status["cmake"], True)
     p_line("C/C++ Compiler", status["c_compiler"], True)
+    p_line("Node.js / NPM (WebUI)", status.get("node_npm"), False)
 
     if CURRENT_OS == "macos":
         p_line("Apple Silicon / CPU", status["apple_silicon"], False)
@@ -1064,6 +1073,17 @@ def build_llama_from_source(backend: str = "cuda", all_targets: bool = False) ->
         warn("No binary files were found to copy!")
     else:
         ok(f"Copied {copied} binaries/assets successfully.")
+
+    # Verify if WebUI was compiled into llama-server
+    ui_dist_built = (
+        (SOURCE_DIR / "build" / "tools" / "ui" / "dist" / "index.html").exists() or
+        (SOURCE_DIR / "tools" / "ui" / "dist" / "index.html").exists()
+    )
+    if ui_dist_built:
+        ok("Embedded WebUI bundle verified inside llama-server.")
+    else:
+        warn("WebUI assets were not generated during CMake build (Node/npm was missing or HF download was unavailable).")
+        warn("llama-server will run in API-only mode (404 on browser root). To embed the WebUI, run 'mise install' and rebuild.")
 
 
 def update_via_build(
