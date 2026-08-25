@@ -111,21 +111,48 @@ def resolve_template_file(filename: str, models_root: Path) -> str:
     return str(templates_root / filename)
 
 
-def load_runner_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+def load_settings(settings_path: Optional[Path] = None) -> Dict[str, Any]:
+    default_settings: Dict[str, Any] = {
+        'server': {
+            'host': '127.0.0.1', 'port': 8080, 'api_key': '', 'ui': False,
+            'metrics': True, 'slots_endpoint': True, 'timeout': 600, 'verbosity': 4, 'predict': -1
+        },
+        'paths': {
+            'models_dir': 'models', 'presets_file': 'presets.json',
+            'prompt_logs_dir': 'prompt_logs', 'bench_results_dir': 'bench-results'
+        },
+        'engine_defaults': {
+            'threads': 8, 'threads_batch': 8, 'batch_size': 2048, 'ubatch_size': 512,
+            'cache_type_k': 'q4_0', 'cache_type_v': 'q4_0', 'flash_attn': 'on',
+            'cache_ram': 0, 'ctx_checkpoints': 4, 'context_shift': True,
+            'reasoning': 'on', 'reasoning_budget': 8192,
+            'temp': 0.7, 'top_p': 0.95, 'top_k': 40, 'min_p': 0.0,
+            'presence_penalty': 0.0, 'repeat_penalty': 1.0, 'load_mode': 'none'
+        }
+    }
+
+    candidates = [settings_path] if settings_path else [Path('settings.json'), Path('settings.example.json')]
+    for cand in candidates:
+        if cand and cand.exists():
+            try:
+                data = json.loads(cand.read_text(encoding='utf-8'))
+                return deep_merge(default_settings, data)
+            except Exception as e:
+                log(f"Warning: Failed to load settings from {cand}: {e}")
+    return default_settings
+
+
+def load_runner_config(config_path: Optional[Path] = None, settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if settings is None:
+        settings = load_settings()
+
+    srv_defaults = copy.deepcopy(settings.get('server', {}))
+    eng_defaults = copy.deepcopy(settings.get('engine_defaults', {}))
+
     default_config: Dict[str, Any] = {
         'defaults': {
-            'server': {
-                'host': '127.0.0.1', 'ui': False, 'metrics': True, 'slots_endpoint': True,
-                'timeout': 600, 'verbosity': 4, 'predict': -1,
-            },
-            'engine': {
-                'cache_type_k': 'q4_0', 'cache_type_v': 'q4_0', 'flash_attn': 'on',
-                'threads': 8, 'threads_batch': 8, 'batch_size': 2048, 'ubatch_size': 512,
-                'cache_ram': 0, 'ctx_checkpoints': 4, 'context_shift': True,
-                'reasoning': 'on', 'reasoning_budget': 8192,
-                'temp': 0.7, 'top_p': 0.95, 'top_k': 40, 'min_p': 0.0,
-                'presence_penalty': 0.0, 'repeat_penalty': 1.0, 'load_mode': 'none',
-            }
+            'server': srv_defaults,
+            'engine': eng_defaults
         },
         'reasoning_prefixes': {
             'Low': "Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.\n\n",
@@ -164,14 +191,14 @@ def load_runner_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         'presets': []
     }
 
-    if config_path is None:
-        config_path = Path('presets.json')
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding='utf-8'))
-            return deep_merge(default_config, data)
-        except Exception as e:
-            log(f"Warning: Failed to load config from {config_path}: {e}")
+    candidates = [config_path] if config_path else [Path('presets.json'), Path('presets.example.json')]
+    for cand in candidates:
+        if cand and cand.exists():
+            try:
+                data = json.loads(cand.read_text(encoding='utf-8'))
+                return deep_merge(default_config, data)
+            except Exception as e:
+                log(f"Warning: Failed to load config from {cand}: {e}")
     return default_config
 
 
@@ -396,6 +423,10 @@ def build_args(cfg: Dict[str, Any], port: int) -> List[str]:
         args += ['-lv', str(server['verbosity'])]
     if server.get('log_prompts_dir'):
         args += ['--log-prompts-dir', server['log_prompts_dir']]
+    if server.get('api_key'):
+        args += ['--api-key', str(server['api_key'])]
+    elif os.environ.get('LLAMA_API_KEY'):
+        args += ['--api-key', os.environ['LLAMA_API_KEY']]
 
     # Engine compute & KV cache options
     if eng.get('cache_type_k') and eng['cache_type_k'] != 'f16':
@@ -1438,8 +1469,16 @@ def build_verified_presets(families: List[Dict[str, Any]], models_root: Path, pr
             return fam, fam['variants'][0]
         return fam, None
 
-    if presets_path is None:
-        presets_path = models_root.parent / 'presets.json'
+    if presets_path is None or not presets_path.exists():
+        if (models_root.parent / 'presets.json').exists():
+            presets_path = models_root.parent / 'presets.json'
+        elif (models_root.parent / 'presets.example.json').exists():
+            presets_path = models_root.parent / 'presets.example.json'
+        elif Path('presets.json').exists():
+            presets_path = Path('presets.json')
+        else:
+            presets_path = Path('presets.example.json')
+
     if not presets_path.exists():
         log(f"Presets configuration file not found at: {presets_path}")
         return presets
@@ -1701,12 +1740,14 @@ def start_server(server_path: Path, resolved: Dict[str, Any], port: int, out_dir
 
     ident = resolved_copy.get('identity', {})
     vis_cfg = resolved_copy.get('vision', {})
+    has_auth = bool(resolved_copy.get('server', {}).get('api_key') or os.environ.get('LLAMA_API_KEY'))
     print(f'  Starting: {ident.get("variant", ident.get("family", "Model"))}')
     print(f'  Context: {ident.get("context_label", "default")} ({ident.get("context_tokens", "auto")})')
     print(f'  Vision: {vis_cfg.get("mode", "No")}')
     print(f'  MTP: {ident.get("mtp_profile", "Off")}')
     print(f'  Reasoning: {ident.get("reasoning_mode", "default")}')
-    print(f'  API: http://127.0.0.1:{port}/v1')
+    print(f'  Auth: {"API Key Protected" if has_auth else "Disabled (Local Public)"}')
+    print(f'  API: http://{resolved_copy.get("server", {}).get("host", "127.0.0.1")}:{port}/v1')
     print(f'  Debug log: {log_file}')
     print(f'  Press Ctrl+C to stop\n')
 
@@ -1728,14 +1769,23 @@ def start_server(server_path: Path, resolved: Dict[str, Any], port: int, out_dir
 
 
 def main() -> int:
+    settings = load_settings()
+    srv_cfg = settings.get('server', {})
+    paths_cfg = settings.get('paths', {})
+
+    default_port = srv_cfg.get('port', 8080)
+    default_models_dir = paths_cfg.get('models_dir', str(Path.cwd() / 'models'))
+    default_presets_file = paths_cfg.get('presets_file', str(Path.cwd() / 'presets.json'))
+    default_out_dir = paths_cfg.get('bench_results_dir', str(Path.cwd() / 'bench-results'))
+
     exe_suffix = '.exe' if sys.platform.startswith('win') else ''
     parser = argparse.ArgumentParser(description='llabrun: Llama.cpp Lab Runner & Orchestrator')
     parser.add_argument('--bin-dir', default=str(Path.cwd() / 'bin'))
-    parser.add_argument('--models-root', default=str(Path.cwd() / 'models'))
-    parser.add_argument('--presets-file', default=str(Path.cwd() / 'presets.json'), help='Path to presets.json configuration file')
-    parser.add_argument('--out-dir', default=str(Path.cwd() / 'bench-results'))
+    parser.add_argument('--models-root', default=str(default_models_dir))
+    parser.add_argument('--presets-file', default=str(default_presets_file), help='Path to presets.json (or presets.example.json) configuration file')
+    parser.add_argument('--out-dir', default=str(default_out_dir))
     parser.add_argument('--server-exe', default=f'llama-server{exe_suffix}')
-    parser.add_argument('--base-port', type=int, default=8080)
+    parser.add_argument('--base-port', type=int, default=default_port)
     parser.add_argument('--download', nargs='?', const='interactive', help='Download model from HuggingFace (repo_id or interactive)')
     args = parser.parse_args()
 

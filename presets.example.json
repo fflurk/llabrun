@@ -1,17 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
-  "description": "Unified configuration for llama.cpp runner: server defaults, family baseline parameters, system prompts, and 1-click model presets.",
+  "description": "Model family baselines, reasoning prefixes, and verified 1-click model presets for llabrun (customize locally by copying to presets.json).",
   "defaults": {
-    "server": {
-      "host": "127.0.0.1",
-      "ui": false,
-      "metrics": true,
-      "slots_endpoint": true,
-      "timeout": 600,
-      "verbosity": 4,
-      "predict": -1
-    },
     "engine": {
       "cache_type_k": "q4_0",
       "cache_type_v": "q4_0",

@@ -27,8 +27,13 @@ __pycache__/
 .venv/
 .env
 
+# Local User Settings & Active Presets (use .example.json templates)
+settings.json
+presets.json
+
 # Editor & OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+

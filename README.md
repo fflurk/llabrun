@@ -117,24 +117,46 @@ mise run download
 uv run --with huggingface_hub python llama_runner.py --download unsloth/Qwen3.8-27B-GGUF
 ```
 
-### 4. Customizing Presets for Your Hardware
-All presets and favorite models are declared in [`presets.json`](presets.json). You can edit existing entries or add custom ones:
-```json
-{
-  "id": "my-custom-model",
-  "category": "Agentic Long-Context",
-  "label": "🚀 My Model [{variant}] - 128k Full Context",
-  "match_family": "my-model-folder-name",
-  "preferred_quants": ["Q4_K_M", "IQ4_XS"],
-  "context": "128k",
-  "vision": "auto",
-  "reasoning": "Thinking (Natural / Medium - Recommended)",
-  "mtp": "Off (Standard)",
-  "engine_overrides": {
-    "ngl": 48
-  }
-}
-```
+### 4. Configuration & Settings Architecture
+`llabrun` decouples personal system settings from model presets to prevent git merge conflicts and protect private API keys:
+
+*   **`settings.json` (System & Network Config):**
+    Copy [`settings.example.json`](settings.example.json) to `settings.json` (ignored by git). Configure server port, host, private API key, directories, and default hardware threads:
+    ```json
+    {
+      "server": {
+        "host": "127.0.0.1",
+        "port": 8080,
+        "api_key": "sk-my-secret-key",
+        "timeout": 600
+      },
+      "paths": {
+        "models_dir": "models",
+        "presets_file": "presets.json"
+      }
+    }
+    ```
+    > 🔒 **Security:** When `api_key` is set, `llama-server` automatically enforces `Authorization: Bearer <KEY>` authentication on all `/v1/*` endpoints. Because `settings.json` is in `.gitignore`, your secret keys are never committed to git.
+
+*   **`presets.json` (Model & Hardware Profiles):**
+    Copy [`presets.example.json`](presets.example.json) to `presets.json` (ignored by git) to customize your 1-click model profiles, layer offload counts (`ngl`), and context sizes without conflicts:
+    ```json
+    {
+      "id": "my-custom-model",
+      "category": "Agentic Long-Context",
+      "label": "🚀 My Model [{variant}] - 128k Full Context",
+      "match_family": "my-model-folder-name",
+      "preferred_quants": ["Q4_K_M", "IQ4_XS"],
+      "context": "128k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "Off (Standard)",
+      "engine_overrides": {
+        "ngl": 48
+      }
+    }
+    ```
+
 You can also specify a custom preset file path when launching the runner:
 ```powershell
 uv run .\llama_runner.py --presets-file .\custom_presets.json
