@@ -1023,6 +1023,10 @@ def main() -> None:
     last_mode = last_info.get("mode", "release")
     last_ver = last_info.get("version")
 
+    # Check if user specified backend explicitly or if we have a saved state
+    has_explicit_backend = bool(args.flag_vulkan or args.flag_hybrid or args.backend)
+    has_saved_backend = bool(BUILD_INFO_FILE.exists() and last_info.get("backend"))
+
     # Determine effective backend (CLI flag overrides saved state)
     if args.flag_vulkan:
         backend = "vulkan"
@@ -1043,6 +1047,16 @@ def main() -> None:
         return
 
     if args.mode_download:
+        if not has_explicit_backend and not has_saved_backend:
+            print(f"\n{Col.BOLD}First-time release download detected! Select your target GPU backend:{Col.RESET}")
+            print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU only ⭐)")
+            print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Intel Arc / AMD / Universal)")
+            while True:
+                d_choice = input("\nChoose [1-2] (default 1): ").strip() or "1"
+                if d_choice in ["1", "2"]:
+                    break
+            backend = {"1": "cuda", "2": "vulkan"}[d_choice]
+
         if backend == "hybrid":
             warn("Hybrid mode is only available for source builds. Falling back to CUDA prebuilt release.")
             backend = "cuda"
@@ -1053,6 +1067,17 @@ def main() -> None:
         return
 
     if args.mode_build:
+        if not has_explicit_backend and not has_saved_backend:
+            print(f"\n{Col.BOLD}First-time source build detected! Select your target GPU backend:{Col.RESET}")
+            print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU only ⭐)")
+            print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Intel Arc / AMD / Universal)")
+            print(f"  {Col.CYAN}[3]{Col.RESET} Hybrid (CUDA + Vulkan — Dual NVIDIA & Intel Arc)")
+            while True:
+                b_choice = input("\nChoose [1-3] (default 1): ").strip() or "1"
+                if b_choice in ["1", "2", "3"]:
+                    break
+            backend = {"1": "cuda", "2": "vulkan", "3": "hybrid"}[b_choice]
+
         update_via_build(
             backend=backend, all_targets=args.all_targets, force=args.force,
             no_backup=args.no_backup, no_diff=args.no_diff

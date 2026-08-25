@@ -14,7 +14,7 @@ description = "Update llama.cpp engine via Lazy Mode precompiled release downloa
 run = "uv run python update_llama.py --download"
 
 [tasks.build]
-description = "Compile llama.cpp from source with CMake + MSVC + CUDA"
+description = "Compile llama.cpp from source with CMake + MSVC (CUDA, Vulkan, or Hybrid)"
 run = "uv run python update_llama.py --build"
 
 [tasks.doctor]
