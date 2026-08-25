@@ -28,6 +28,67 @@ if sys.platform == 'win32':
         pass
 
 
+# ── Last Run State & Presets Persistence ──────────────────────────────────
+LAST_RUN_FILE = Path("bin/.llama_last_run.json")
+
+
+def save_last_run(run_data: Dict[str, Any]) -> None:
+    try:
+        LAST_RUN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LAST_RUN_FILE.write_text(json.dumps(run_data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log(f"Warning: Failed to save last run state: {e}")
+
+
+def load_last_run() -> Optional[Dict[str, Any]]:
+    if LAST_RUN_FILE.exists():
+        try:
+            return json.loads(LAST_RUN_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def save_preset_to_file(preset_data: Dict[str, Any], presets_path: Optional[Path] = None) -> bool:
+    if presets_path is None:
+        presets_path = Path("presets.json")
+
+    presets_config: Dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "version": 1,
+        "description": "User and custom 1-click model presets for llabrun.",
+        "presets": []
+    }
+
+    if presets_path.exists():
+        try:
+            presets_config = json.loads(presets_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    elif Path("presets.example.json").exists():
+        try:
+            example_cfg = json.loads(Path("presets.example.json").read_text(encoding="utf-8"))
+            presets_config["defaults"] = example_cfg.get("defaults", {})
+            presets_config["reasoning_prefixes"] = example_cfg.get("reasoning_prefixes", {})
+            presets_config["families"] = example_cfg.get("families", {})
+            presets_config["presets"] = []
+        except Exception:
+            pass
+
+    if "presets" not in presets_config:
+        presets_config["presets"] = []
+
+    # Check if duplicate ID exists, replace or append
+    existing_idx = next((i for i, p in enumerate(presets_config["presets"]) if p.get("id") == preset_data.get("id")), None)
+    if existing_idx is not None:
+        presets_config["presets"][existing_idx] = preset_data
+    else:
+        presets_config["presets"].append(preset_data)
+
+    presets_path.write_text(json.dumps(presets_config, indent=2, ensure_ascii=False), encoding="utf-8")
+    return True
+
+
 # ── Benchmark Tool Definitions ─────────────────────────────────────────────
 
 BENCHMARK_TOOLS = []
@@ -1822,20 +1883,54 @@ def main() -> int:
         else:
             return 0
 
+    last_run = load_last_run()
+    has_valid_last_run = False
+    if last_run and last_run.get('cfg'):
+        ident = last_run.get('cfg', {}).get('identity', {})
+        model_p = ident.get('model_path')
+        if model_p and Path(model_p).exists():
+            has_valid_last_run = True
+
     print('\n' + '=' * 60)
     print('  llabrun — Llama.cpp Lab Runner & Orchestrator')
     print('=' * 60)
-    print('1. Select Action')
-    print('[1] Start Server (Verified 1-Click Hardware Presets ⭐)')
-    print('[2] Start Server (Custom / Interactive Configuration)')
-    print('[3] Run Benchmark (Automated evaluation loop)')
-    print('[4] Generate Router INI Presets')
-    print('[5] Download Models (from HuggingFace ⭐)')
-    while True:
-        action_raw = input('Choose [1], [2], [3], [4], or [5]: ').strip()
-        if action_raw in ['1', '2', '3', '4', '5']:
-            action = {'1': 'preset', '2': 'start', '3': 'benchmark', '4': 'router', '5': 'download'}[action_raw]
-            break
+
+    if has_valid_last_run:
+        last_var = last_run.get('variant', 'Model')
+        last_ctx = last_run.get('context', 'default')
+        last_vis = last_run.get('vision', 'No')
+        last_mtp = last_run.get('mtp', 'Off')
+        print(f"  Last Run: {last_var} [{last_ctx} | Vision: {last_vis} | MTP: {last_mtp}]")
+        print('\n1. Select Action')
+        print(f'[1] Quick Start: Run Last Configuration ({last_var}) ⭐ [Press Enter]')
+        print('[2] Start Server (Interactive Setup / Custom Model)')
+        print('[3] Start Server (Verified 1-Click Hardware Presets)')
+        print('[4] Run Benchmark (Automated evaluation loop)')
+        print('[5] Generate Router INI Presets')
+        print('[6] Download Models (from HuggingFace ⭐)')
+
+        while True:
+            action_raw = input('\nChoose [1-6] (default [1]): ').strip() or '1'
+            if action_raw in ['1', '2', '3', '4', '5', '6']:
+                action = {'1': 'last', '2': 'start', '3': 'preset', '4': 'benchmark', '5': 'router', '6': 'download'}[action_raw]
+                break
+    else:
+        print('\n1. Select Action')
+        print('[1] Start Server (Interactive Setup / Custom Model ⭐) [Press Enter]')
+        print('[2] Start Server (Verified 1-Click Hardware Presets)')
+        print('[3] Run Benchmark (Automated evaluation loop)')
+        print('[4] Generate Router INI Presets')
+        print('[5] Download Models (from HuggingFace ⭐)')
+
+        while True:
+            action_raw = input('\nChoose [1-5] (default [1]): ').strip() or '1'
+            if action_raw in ['1', '2', '3', '4', '5']:
+                action = {'1': 'start', '2': 'preset', '3': 'benchmark', '4': 'router', '5': 'download'}[action_raw]
+                break
+
+    if action == 'last':
+        print(f"\n🚀 Quick-Starting last configuration: {last_run.get('variant')}...")
+        return start_server(server_path, last_run['cfg'], args.base_port, out_dir, last_run.get('cfg', {}).get('server', {}).get('log_prompts_dir'))
 
     if action == 'download':
         return download_models_interactive(models_root)
@@ -2068,6 +2163,44 @@ def main() -> int:
         if log_prompts_val:
             base_cfg['server']['log_prompts_dir'] = log_prompts_val
         resolved = base_cfg
+
+        # Save to last run state
+        run_record = {
+            'variant': variant['variant'],
+            'family': variant['family'],
+            'base_model': variant['base_model'],
+            'model_path': variant['model_path'],
+            'context': ctx,
+            'vision': vis_mode,
+            'reasoning': r_mode,
+            'temp_profile': t_prof,
+            'mtp': m_prof,
+            'cfg': resolved,
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_last_run(run_record)
+
+        # Offer to save configuration to presets.json
+        print()
+        save_pr_choice = input('Save this configuration to presets.json as a 1-click preset? [y/N]: ').strip().lower()
+        if save_pr_choice in ['y', 'yes']:
+            preset_label = input(f'Enter preset label (default: "{variant["variant"]} ({ctx})"): ').strip() or f'{variant["variant"]} ({ctx})'
+            clean_id = re.sub(r'[^a-zA-Z0-9_\-]', '-', variant['variant'].lower()).strip('-') + f'-{ctx.lower()}'
+            preset_item = {
+                'id': clean_id,
+                'category': 'Custom Presets',
+                'label': f'⭐ {preset_label}',
+                'match_family': variant['family'],
+                'preferred_quants': [variant['variant']],
+                'context': ctx,
+                'vision': vis_mode,
+                'reasoning': r_mode,
+                'temp_profile': t_prof,
+                'mtp': m_prof
+            }
+            target_presets_file = Path(args.presets_file) if args.presets_file else Path('presets.json')
+            save_preset_to_file(preset_item, target_presets_file)
+            print(f"  ✅ Saved preset '{preset_label}' to {target_presets_file.name}!")
 
         return start_server(server_path, resolved, port, out_dir, log_prompts_val)
 
