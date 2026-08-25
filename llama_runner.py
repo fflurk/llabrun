@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import threading
@@ -1727,12 +1728,13 @@ def start_server(server_path: Path, resolved: Dict[str, Any], port: int, out_dir
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='llama.cpp runner and benchmark tool')
+    exe_suffix = '.exe' if sys.platform.startswith('win') else ''
+    parser = argparse.ArgumentParser(description='llabrun: Llama.cpp Lab Runner & Orchestrator')
     parser.add_argument('--bin-dir', default=str(Path.cwd() / 'bin'))
     parser.add_argument('--models-root', default=str(Path.cwd() / 'models'))
     parser.add_argument('--presets-file', default=str(Path.cwd() / 'presets.json'), help='Path to presets.json configuration file')
     parser.add_argument('--out-dir', default=str(Path.cwd() / 'bench-results'))
-    parser.add_argument('--server-exe', default='llama-server.exe')
+    parser.add_argument('--server-exe', default=f'llama-server{exe_suffix}')
     parser.add_argument('--base-port', type=int, default=8080)
     parser.add_argument('--download', nargs='?', const='interactive', help='Download model from HuggingFace (repo_id or interactive)')
     args = parser.parse_args()
@@ -1747,8 +1749,19 @@ def main() -> int:
         target_repo = None if args.download == 'interactive' else args.download
         return download_models_interactive(models_root, target_repo)
 
+    if not server_path.exists() and sys.platform != 'win32':
+        alt_path = bin_dir / 'llama-server'
+        if alt_path.exists():
+            server_path = alt_path
+
     if not server_path.exists():
         raise FileNotFoundError(f'Server executable not found: {server_path}')
+
+    if sys.platform != 'win32':
+        try:
+            server_path.chmod(server_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        except Exception:
+            pass
     out_dir.mkdir(parents=True, exist_ok=True)
     port = args.base_port
 

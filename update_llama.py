@@ -17,23 +17,57 @@ Features:
   - Categorized commit changelog (CUDA, Vulkan, Server, Models, Core)
   - Automatic HuggingFace chat template synchronization
   - Safe backup and one-command rollback
-  - Comprehensive system diagnostics / doctor
+  - Cross-platform support (macOS Metal, Linux/WSL2 CUDA, Windows CUDA/Vulkan/Hybrid)
 """
-
 import argparse
 import difflib
 import json
 import os
+import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
+
+# ── Platform & Environment Detection ──────────────────────────────────────
+def get_system_info() -> Dict[str, str]:
+    raw_os = sys.platform
+    arch = platform.machine().lower()
+    if arch in ["aarch64", "arm64"]:
+        arch = "arm64"
+    else:
+        arch = "x86_64"
+
+    os_type = "windows"
+    if raw_os == "darwin":
+        os_type = "macos"
+    elif raw_os.startswith("linux"):
+        if os.path.exists("/proc/version"):
+            try:
+                proc_ver = Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
+                if "microsoft" in proc_ver or "wsl" in proc_ver:
+                    os_type = "wsl2"
+                else:
+                    os_type = "linux"
+            except Exception:
+                os_type = "linux"
+        else:
+            os_type = "linux"
+    return {"os": os_type, "arch": arch}
+
+
+SYS_INFO = get_system_info()
+CURRENT_OS = SYS_INFO["os"]
+CURRENT_ARCH = SYS_INFO["arch"]
+EXE_EXT = ".exe" if CURRENT_OS == "windows" else ""
 
 # ── Configuration ──────────────────────────────────────────────────────────
 REPO = "ggml-org/llama.cpp"
@@ -43,8 +77,9 @@ BACKUP_DIR = Path("bin_backup")
 VERSION_FILE = Path("bin/.llama_version")
 BUILD_INFO_FILE = Path("bin/.llama_build_info.json")
 HELP_BEFORE_FILE = Path("bin/.llama_help_snapshot.txt")
-CURL_EXE = r"C:\Windows\System32\curl.exe"  # Real Windows curl
-SERVER_EXE = BIN_DIR / "llama-server.exe"
+CURL_EXE = r"C:\Windows\System32\curl.exe" if CURRENT_OS == "windows" else "curl"
+SERVER_EXE = BIN_DIR / f"llama-server{EXE_EXT}"
+CLI_EXE = BIN_DIR / f"llama-cli{EXE_EXT}"
 
 
 # ── ANSI Terminal Colors ───────────────────────────────────────────────────
@@ -410,15 +445,18 @@ def rollback() -> None:
 def check_prerequisites() -> Dict[str, Any]:
     info("Checking system prerequisites...")
     status: Dict[str, Any] = {
+        "os": f"{CURRENT_OS.upper()} ({CURRENT_ARCH})",
         "python": sys.version.split()[0],
         "uv": None,
         "git": None,
         "cmake": None,
-        "vcvars": None,
+        "c_compiler": None,
         "cuda_nvcc": None,
         "nvidia_gpu": None,
         "vulkan_runtime": None,
         "vulkan_sdk": None,
+        "apple_silicon": None,
+        "xcode_cli": None,
     }
 
     # uv
@@ -445,122 +483,208 @@ def check_prerequisites() -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Visual Studio C++ Compiler (vswhere -> vcvars64.bat)
-    try:
-        vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-        if vswhere.exists():
-            res = subprocess.run([
-                str(vswhere), "-latest", "-products", "*",
-                "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                "-property", "installationPath"
-            ], capture_output=True, text=True)
-            path_out = res.stdout.strip()
-            if path_out:
-                vcvars = Path(path_out) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
-                if vcvars.exists():
-                    status["vcvars"] = str(vcvars)
-    except Exception:
-        pass
+    # Platform specific checks
+    if CURRENT_OS == "macos":
+        # Apple Silicon / CPU Brand
+        try:
+            res = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                status["apple_silicon"] = res.stdout.strip()
+        except Exception:
+            pass
+        # Xcode CLI tools
+        try:
+            res = subprocess.run(["xcode-select", "-p"], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                status["xcode_cli"] = res.stdout.strip()
+                status["c_compiler"] = "Apple Clang (via Xcode CLI Tools)"
+        except Exception:
+            pass
 
-    # CUDA Toolkit (nvcc)
-    try:
-        res = subprocess.run(["nvcc", "--version"], capture_output=True, text=True)
-        if res.returncode == 0:
-            for line in res.stdout.splitlines():
-                if "release" in line.lower():
-                    status["cuda_nvcc"] = line.strip()
-                    break
-    except Exception:
-        pass
-    if not status["cuda_nvcc"] and os.environ.get("CUDA_PATH"):
-        status["cuda_nvcc"] = f"Found in CUDA_PATH: {os.environ.get('CUDA_PATH')}"
+    elif CURRENT_OS in ["linux", "wsl2"]:
+        # GCC / Clang
+        try:
+            res = subprocess.run(["gcc", "--version"], capture_output=True, text=True)
+            if res.returncode == 0:
+                status["c_compiler"] = res.stdout.splitlines()[0]
+        except Exception:
+            pass
+        if not status["c_compiler"]:
+            try:
+                res = subprocess.run(["clang", "--version"], capture_output=True, text=True)
+                if res.returncode == 0:
+                    status["c_compiler"] = res.stdout.splitlines()[0]
+            except Exception:
+                pass
 
-    # NVIDIA GPU & Driver (nvidia-smi)
-    try:
-        res = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
-            capture_output=True, text=True
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            status["nvidia_gpu"] = res.stdout.splitlines()[0].strip()
-    except Exception:
-        pass
+        # NVIDIA GPU
+        try:
+            res = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                status["nvidia_gpu"] = res.stdout.splitlines()[0].strip()
+        except Exception:
+            pass
 
-    # Vulkan Support (vulkaninfo or standard system dll)
-    vulkan_dll = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "vulkan-1.dll"
-    if vulkan_dll.exists():
-        status["vulkan_runtime"] = "vulkan-1.dll present in System32 (GPU driver supported)"
-    try:
-        res = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True)
-        if res.returncode == 0:
-            status["vulkan_runtime"] = "vulkaninfo CLI functional"
-    except Exception:
-        pass
+        # CUDA nvcc
+        try:
+            res = subprocess.run(["nvcc", "--version"], capture_output=True, text=True)
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    if "release" in line.lower():
+                        status["cuda_nvcc"] = line.strip()
+                        break
+        except Exception:
+            pass
 
-    # Vulkan SDK (glslc & headers required for compiling from source)
-    try:
-        res = subprocess.run(["glslc", "--version"], capture_output=True, text=True)
-        if res.returncode == 0:
-            status["vulkan_sdk"] = res.stdout.splitlines()[0].strip()
-    except Exception:
-        pass
-    if not status["vulkan_sdk"] and os.environ.get("VULKAN_SDK"):
-        status["vulkan_sdk"] = f"Found in VULKAN_SDK: {os.environ.get('VULKAN_SDK')}"
-    if not status["vulkan_sdk"]:
-        vulkan_root = Path("C:/VulkanSDK")
-        if vulkan_root.exists():
-            sdk_dirs = sorted(vulkan_root.glob("*"), reverse=True)
-            if sdk_dirs and (sdk_dirs[0] / "Bin" / "glslc.exe").exists():
-                status["vulkan_sdk"] = f"Found in {sdk_dirs[0]}"
+        # Vulkan
+        try:
+            res = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True)
+            if res.returncode == 0:
+                status["vulkan_runtime"] = "vulkaninfo CLI functional"
+        except Exception:
+            pass
+
+    else: # Windows
+        # MSVC
+        try:
+            vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            if vswhere.exists():
+                res = subprocess.run([
+                    str(vswhere), "-latest", "-products", "*",
+                    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property", "installationPath"
+                ], capture_output=True, text=True)
+                path_out = res.stdout.strip()
+                if path_out:
+                    vcvars = Path(path_out) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+                    if vcvars.exists():
+                        status["c_compiler"] = f"MSVC (vcvars64.bat found in {path_out})"
+        except Exception:
+            pass
+
+        # CUDA Toolkit (nvcc)
+        try:
+            res = subprocess.run(["nvcc", "--version"], capture_output=True, text=True)
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    if "release" in line.lower():
+                        status["cuda_nvcc"] = line.strip()
+                        break
+        except Exception:
+            pass
+        if not status["cuda_nvcc"] and os.environ.get("CUDA_PATH"):
+            status["cuda_nvcc"] = f"Found in CUDA_PATH: {os.environ.get('CUDA_PATH')}"
+
+        # NVIDIA GPU
+        try:
+            res = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                status["nvidia_gpu"] = res.stdout.splitlines()[0].strip()
+        except Exception:
+            pass
+
+        # Vulkan Support
+        vulkan_dll = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "vulkan-1.dll"
+        if vulkan_dll.exists():
+            status["vulkan_runtime"] = "vulkan-1.dll present in System32"
+        try:
+            res = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True)
+            if res.returncode == 0:
+                status["vulkan_runtime"] = "vulkaninfo CLI functional"
+        except Exception:
+            pass
+
+        # Vulkan SDK
+        try:
+            res = subprocess.run(["glslc", "--version"], capture_output=True, text=True)
+            if res.returncode == 0:
+                status["vulkan_sdk"] = res.stdout.splitlines()[0].strip()
+        except Exception:
+            pass
+        if not status["vulkan_sdk"] and os.environ.get("VULKAN_SDK"):
+            status["vulkan_sdk"] = f"Found in VULKAN_SDK: {os.environ.get('VULKAN_SDK')}"
+        if not status["vulkan_sdk"]:
+            vulkan_root = Path("C:/VulkanSDK")
+            if vulkan_root.exists():
+                sdk_dirs = sorted(vulkan_root.glob("*"), reverse=True)
+                if sdk_dirs and (sdk_dirs[0] / "Bin" / "glslc.exe").exists():
+                    status["vulkan_sdk"] = f"Found in {sdk_dirs[0]}"
 
     print()
     _print_safe(f"{Col.BOLD}{'=' * 60}{Col.RESET}")
-    _print_safe(f"{Col.BOLD}  System Prerequisite Diagnostics (Doctor){Col.RESET}")
+    _print_safe(f"{Col.BOLD}  System Prerequisite Diagnostics (Doctor) - {status['os']}{Col.RESET}")
     _print_safe(f"{Col.BOLD}{'=' * 60}{Col.RESET}")
 
     def p_line(name: str, val: Optional[str], needed_for_build: bool = True):
         if val:
-            _print_safe(f"  {Col.GREEN}+ {name:<22}: {val}{Col.RESET}")
+            _print_safe(f"  {Col.GREEN}+ {name:<24}: {val}{Col.RESET}")
         else:
             req_str = " (Required for Source Build)" if needed_for_build else " (Optional)"
-            _print_safe(f"  {Col.YELLOW}! {name:<22}: Not Found{req_str}{Col.RESET}")
+            _print_safe(f"  {Col.YELLOW}! {name:<24}: Not Found{req_str}{Col.RESET}")
 
+    p_line("Platform OS / Arch", status["os"], False)
     p_line("Python Runtime", status["python"], False)
     p_line("uv Package Manager", status["uv"], False)
-    p_line("NVIDIA GPU / Driver", status["nvidia_gpu"], False)
-    p_line("Vulkan Driver / DLL", status["vulkan_runtime"], False)
     p_line("Git", status["git"], True)
     p_line("CMake", status["cmake"], True)
-    p_line("MSVC C++ Toolchain", "Found (vcvars64.bat)" if status["vcvars"] else None, True)
-    p_line("CUDA Toolkit (nvcc)", status["cuda_nvcc"], False)
-    p_line("Vulkan SDK (glslc)", status["vulkan_sdk"], False)
+    p_line("C/C++ Compiler", status["c_compiler"], True)
+
+    if CURRENT_OS == "macos":
+        p_line("Apple Silicon / CPU", status["apple_silicon"], False)
+        p_line("Xcode Command Line Tools", status["xcode_cli"], True)
+    elif CURRENT_OS in ["linux", "wsl2"]:
+        p_line("NVIDIA GPU / Driver", status["nvidia_gpu"], False)
+        p_line("CUDA Toolkit (nvcc)", status["cuda_nvcc"], False)
+        p_line("Vulkan Driver", status["vulkan_runtime"], False)
+    else: # Windows
+        p_line("NVIDIA GPU / Driver", status["nvidia_gpu"], False)
+        p_line("CUDA Toolkit (nvcc)", status["cuda_nvcc"], False)
+        p_line("Vulkan Driver / DLL", status["vulkan_runtime"], False)
+        p_line("Vulkan SDK (glslc)", status["vulkan_sdk"], False)
 
     print()
-    can_build_base = all([status["git"], status["cmake"] or status["vcvars"], status["vcvars"]])
-    can_build_cuda = can_build_base and status["cuda_nvcc"] is not None
-    can_build_vulkan = can_build_base and status["vulkan_sdk"] is not None
-    can_build_hybrid = can_build_cuda and can_build_vulkan
-
     _print_safe(f"  {Col.BOLD}Mode Compatibility:{Col.RESET}")
-    _print_safe(f"    - {Col.GREEN}Lazy Mode (Prebuilt CUDA):{Col.RESET} READY (Requires only NVIDIA driver)")
-    _print_safe(f"    - {Col.GREEN}Lazy Mode (Prebuilt Vulkan):{Col.RESET} READY (Works with NVIDIA, Intel Arc, AMD)")
-    
-    if can_build_cuda:
-        _print_safe(f"    - {Col.GREEN}Source Build (CUDA):{Col.RESET} READY (All MSVC & CUDA tools found)")
-    else:
-        _print_safe(f"    - {Col.YELLOW}Source Build (CUDA):{Col.RESET} MISSING PREREQUISITES (CUDA Toolkit needed)")
 
-    if can_build_vulkan:
-        _print_safe(f"    - {Col.GREEN}Source Build (Vulkan):{Col.RESET} READY (MSVC + CMake + Vulkan SDK ready)")
-    else:
-        _print_safe(f"    - {Col.YELLOW}Source Build (Vulkan):{Col.RESET} MISSING PREREQUISITES (LunarG Vulkan SDK needed)")
-        if not status["vulkan_sdk"]:
-            _print_safe(f"        -> Install via winget: {Col.CYAN}winget install KhronosGroup.VulkanSDK{Col.RESET}")
+    if CURRENT_OS == "macos":
+        _print_safe(f"    - {Col.GREEN}Lazy Mode (Prebuilt Metal):{Col.RESET} READY (Apple Silicon native)")
+        if status["git"] and status["cmake"] and status["xcode_cli"]:
+            _print_safe(f"    - {Col.GREEN}Source Build (Metal):{Col.RESET} READY (Apple Clang + Metal framework ready)")
+        else:
+            _print_safe(f"    - {Col.YELLOW}Source Build (Metal):{Col.RESET} MISSING PREREQUISITES (Run: xcode-select --install)")
 
-    if can_build_hybrid:
-        _print_safe(f"    - {Col.GREEN}Source Build (Hybrid):{Col.RESET} READY (CUDA + Vulkan SDK ready)")
-    else:
-        _print_safe(f"    - {Col.YELLOW}Source Build (Hybrid):{Col.RESET} MISSING PREREQUISITES (Requires both CUDA & Vulkan SDKs)")
+    elif CURRENT_OS in ["linux", "wsl2"]:
+        _print_safe(f"    - {Col.GREEN}Lazy Mode (Prebuilt Release):{Col.RESET} READY (Ubuntu x64 / Vulkan)")
+        can_build_linux_cuda = status["git"] and status["cmake"] and status["c_compiler"] and status["cuda_nvcc"]
+        if can_build_linux_cuda:
+            _print_safe(f"    - {Col.GREEN}Source Build (CUDA):{Col.RESET} READY (GCC + CMake + CUDA Toolkit ready)")
+        else:
+            _print_safe(f"    - {Col.YELLOW}Source Build (CUDA):{Col.RESET} MISSING PREREQUISITES (Need build-essential, cmake, cuda-toolkit)")
+
+    else: # Windows
+        can_build_base = all([status["git"], status["cmake"] or status["c_compiler"], status["c_compiler"]])
+        can_build_cuda = can_build_base and status["cuda_nvcc"] is not None
+        can_build_vulkan = can_build_base and status["vulkan_sdk"] is not None
+        can_build_hybrid = can_build_cuda and can_build_vulkan
+
+        _print_safe(f"    - {Col.GREEN}Lazy Mode (Prebuilt CUDA):{Col.RESET} READY (Requires only NVIDIA driver)")
+        _print_safe(f"    - {Col.GREEN}Lazy Mode (Prebuilt Vulkan):{Col.RESET} READY (Works with NVIDIA, Intel Arc, AMD)")
+        
+        if can_build_cuda:
+            _print_safe(f"    - {Col.GREEN}Source Build (CUDA):{Col.RESET} READY (All MSVC & CUDA tools found)")
+        else:
+            _print_safe(f"    - {Col.YELLOW}Source Build (CUDA):{Col.RESET} MISSING PREREQUISITES (CUDA Toolkit needed)")
+
+        if can_build_vulkan:
+            _print_safe(f"    - {Col.GREEN}Source Build (Vulkan):{Col.RESET} READY (MSVC + CMake + Vulkan SDK ready)")
+        else:
+            _print_safe(f"    - {Col.YELLOW}Source Build (Vulkan):{Col.RESET} MISSING PREREQUISITES (LunarG Vulkan SDK needed)")
+            if not status["vulkan_sdk"]:
+                _print_safe(f"        -> Install via winget: {Col.CYAN}winget install KhronosGroup.VulkanSDK{Col.RESET}")
+
+        if can_build_hybrid:
+            _print_safe(f"    - {Col.GREEN}Source Build (Hybrid):{Col.RESET} READY (CUDA + Vulkan SDK ready)")
+        else:
+            _print_safe(f"    - {Col.YELLOW}Source Build (Hybrid):{Col.RESET} MISSING PREREQUISITES (Requires both CUDA & Vulkan SDKs)")
 
     _print_safe(f"{Col.BOLD}{'=' * 60}{Col.RESET}\n")
     return status
@@ -579,9 +703,9 @@ def fetch_release_info(preferred_tag: Optional[str] = None) -> Dict[str, Any]:
     if isinstance(releases, list):
         for r in releases:
             assets = r.get("assets", [])
-            if assets and any("win" in a.get("name", "").lower() for a in assets):
+            if assets and any(a.get("name", "").startswith("llama-b") for a in assets):
                 return r
-    raise RuntimeError("No suitable Windows releases found on GitHub.")
+    raise RuntimeError("No suitable llama.cpp releases found on GitHub.")
 
 
 def select_release_assets(
@@ -590,10 +714,39 @@ def select_release_assets(
     backend: str = "cuda"
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     assets = release_data.get("assets", [])
+
+    if CURRENT_OS == "macos":
+        # Apple Silicon arm64 with Metal
+        macos_asset = next((
+            a for a in assets
+            if "macos" in a["name"].lower() and "arm64" in a["name"].lower() and "bin" in a["name"].lower()
+        ), None)
+        if not macos_asset:
+            raise RuntimeError(f"Could not find macOS Apple Silicon (arm64) asset in release {release_data.get('tag_name')}.")
+        return macos_asset, None
+
+    if CURRENT_OS in ["linux", "wsl2"]:
+        if backend == "vulkan":
+            vulkan_asset = next((
+                a for a in assets
+                if "ubuntu" in a["name"].lower() and "vulkan" in a["name"].lower() and "x64" in a["name"].lower() and "arm64" not in a["name"].lower()
+            ), None)
+            if not vulkan_asset:
+                raise RuntimeError(f"Could not find Ubuntu Vulkan asset in release {release_data.get('tag_name')}.")
+            return vulkan_asset, None
+        else: # CPU / default
+            cpu_asset = next((
+                a for a in assets
+                if "ubuntu" in a["name"].lower() and "x64" in a["name"].lower() and not any(k in a["name"].lower() for k in ["vulkan", "rocm", "sycl", "openvino", "arm64"])
+            ), None)
+            if not cpu_asset:
+                raise RuntimeError(f"Could not find Ubuntu x64 asset in release {release_data.get('tag_name')}.")
+            return cpu_asset, None
+
+    # Windows assets
     win_assets = [a for a in assets if "win" in a.get("name", "").lower() and a.get("name", "").endswith(".zip")]
 
     if backend == "vulkan":
-        # Match llama-b*-bin-win-vulkan-x64.zip
         vulkan_asset = next((
             a for a in win_assets
             if "vulkan" in a["name"].lower() and "x64" in a["name"].lower() and "arm64" not in a["name"].lower()
@@ -602,7 +755,7 @@ def select_release_assets(
             raise RuntimeError(f"Could not find Vulkan asset in release {release_data.get('tag_name')}.")
         return vulkan_asset, None
 
-    # CUDA: Find main llama-b*-bin-win-cuda-*-x64.zip + cudart-llama-bin-win-cuda-*-x64.zip
+    # Windows CUDA
     cuda_candidates = [
         a for a in win_assets
         if "cuda" in a["name"].lower() and "x64" in a["name"].lower() and "arm64" not in a["name"].lower()
@@ -612,7 +765,6 @@ def select_release_assets(
         main_bin = next((a for a in cuda_candidates if a["name"].startswith("llama-") and cuda_version in a["name"]), None)
         cudart_bin = next((a for a in cuda_candidates if a["name"].startswith("cudart-") and cuda_version in a["name"]), None)
     else:
-        # Preference: 13.3 > 12.4 > 12.2 > any cuda
         preferred_vers = ["13.3", "12.4", "12.2", "11.8"]
         main_bin = None
         cudart_bin = None
@@ -624,7 +776,6 @@ def select_release_assets(
                 break
 
         if not main_bin or not cudart_bin:
-            # Fallback to first matching pair
             for a in cuda_candidates:
                 if a["name"].startswith("llama-"):
                     m = re.search(r'cuda-([0-9\.]+)', a["name"])
@@ -641,6 +792,28 @@ def select_release_assets(
     return main_bin, cudart_bin
 
 
+def extract_archive(archive_path: Path, target_dir: Path) -> None:
+    """Extracts .zip or .tar.gz archive and ensures executable permissions on POSIX."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if archive_path.name.endswith(".zip"):
+        with zipfile.ZipFile(archive_path, "r") as z:
+            z.extractall(target_dir)
+    elif archive_path.name.endswith((".tar.gz", ".tgz")):
+        with tarfile.open(archive_path, "r:gz") as t:
+            t.extractall(target_dir)
+    else:
+        raise ValueError(f"Unsupported archive format: {archive_path.name}")
+
+    if CURRENT_OS != "windows":
+        for p in target_dir.glob("*"):
+            if p.is_file() and not p.name.endswith((".txt", ".json", ".md", ".h", ".hpp", ".spv")):
+                try:
+                    mode = p.stat().st_mode
+                    p.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                except Exception:
+                    pass
+
+
 def update_via_release(
     tag: Optional[str] = None,
     cuda_ver: Optional[str] = None,
@@ -650,8 +823,14 @@ def update_via_release(
     no_backup: bool = False,
     no_diff: bool = False
 ) -> None:
-    backend_label = "Vulkan" if backend == "vulkan" else "CUDA"
-    info(f"Querying GitHub for llama.cpp release ({backend_label} backend)...")
+    if CURRENT_OS == "macos":
+        backend_label = "Apple Metal"
+    elif CURRENT_OS in ["linux", "wsl2"]:
+        backend_label = "Vulkan" if backend == "vulkan" else "CPU / OpenMP"
+    else:
+        backend_label = "Vulkan" if backend == "vulkan" else "CUDA"
+
+    info(f"Querying GitHub for llama.cpp release ({backend_label})...")
     release_data = fetch_release_info(tag)
     release_tag = release_data.get("tag_name", "unknown")
     installed_ver = get_installed_version()
@@ -684,28 +863,28 @@ def update_via_release(
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
-        main_zip = tmp_path / main_asset["name"]
+        main_archive = tmp_path / main_asset["name"]
 
         info(f"Downloading {main_asset['name']}...")
-        download_file(main_asset["browser_download_url"], str(main_zip))
+        download_file(main_asset["browser_download_url"], str(main_archive))
 
+        cudart_archive = None
         if cudart_asset:
-            cudart_zip = tmp_path / cudart_asset["name"]
+            cudart_archive = tmp_path / cudart_asset["name"]
             info(f"Downloading {cudart_asset['name']}...")
-            download_file(cudart_asset["browser_download_url"], str(cudart_zip))
+            download_file(cudart_asset["browser_download_url"], str(cudart_archive))
 
         BIN_DIR.mkdir(parents=True, exist_ok=True)
         info("Extracting binaries to bin/...")
 
-        with zipfile.ZipFile(main_zip, "r") as z:
-            z.extractall(BIN_DIR)
+        extract_archive(main_archive, BIN_DIR)
 
-        if cudart_asset:
-            with zipfile.ZipFile(cudart_zip, "r") as z:
-                z.extractall(BIN_DIR)
+        if cudart_archive:
+            extract_archive(cudart_archive, BIN_DIR)
 
     ok(f"Successfully extracted release {release_tag} ({backend_label}) into bin/")
-    save_build_info(release_tag, mode="release", backend=backend)
+    effective_backend = "metal" if CURRENT_OS == "macos" else backend
+    save_build_info(release_tag, mode="release", backend=effective_backend)
 
     # Capture help after & diff
     if not no_diff:
@@ -776,53 +955,70 @@ def git_get_closest_tag(repo_dir: Path, sha: str = "HEAD") -> Optional[str]:
 
 
 def run_cmake_cmd(cmd_list: List[str], cwd: Path) -> None:
-    vcvars_prefix = ""
-    try:
-        vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-        if vswhere.exists():
-            result = subprocess.run([
-                str(vswhere), "-latest", "-products", "*",
-                "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                "-property", "installationPath"
-            ], capture_output=True, text=True, check=True)
+    if CURRENT_OS == "windows":
+        vcvars_prefix = ""
+        try:
+            vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            if vswhere.exists():
+                result = subprocess.run([
+                    str(vswhere), "-latest", "-products", "*",
+                    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property", "installationPath"
+                ], capture_output=True, text=True, check=True)
 
-            install_path = result.stdout.strip()
-            if install_path:
-                vcvars = Path(install_path) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
-                if vcvars.exists():
-                    vcvars_prefix = f'call "{vcvars}" >nul && '
-    except Exception:
-        pass
+                install_path = result.stdout.strip()
+                if install_path:
+                    vcvars = Path(install_path) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+                    if vcvars.exists():
+                        vcvars_prefix = f'call "{vcvars}" >nul && '
+        except Exception:
+            pass
 
-    # Auto-detect Vulkan SDK if installed in standard path but not in session PATH
-    vulkan_env_prefix = ""
-    if not os.environ.get("VULKAN_SDK"):
-        vulkan_root = Path("C:/VulkanSDK")
-        if vulkan_root.exists():
-            sdk_dirs = sorted(vulkan_root.glob("*"), reverse=True)
-            if sdk_dirs and (sdk_dirs[0] / "Bin" / "glslc.exe").exists():
-                sdk_path = sdk_dirs[0]
-                vulkan_env_prefix = f'set "VULKAN_SDK={sdk_path}" && set "PATH={sdk_path}\\Bin;%PATH%" && '
+        # Auto-detect Vulkan SDK if installed in standard path but not in session PATH
+        vulkan_env_prefix = ""
+        if not os.environ.get("VULKAN_SDK"):
+            vulkan_root = Path("C:/VulkanSDK")
+            if vulkan_root.exists():
+                sdk_dirs = sorted(vulkan_root.glob("*"), reverse=True)
+                if sdk_dirs and (sdk_dirs[0] / "Bin" / "glslc.exe").exists():
+                    sdk_path = sdk_dirs[0]
+                    vulkan_env_prefix = f'set "VULKAN_SDK={sdk_path}" && set "PATH={sdk_path}\\Bin;%PATH%" && '
 
-    cmd_str = " ".join(cmd_list)
-    full_cmd = f"{vcvars_prefix}{vulkan_env_prefix}{cmd_str}"
-    subprocess.run(full_cmd, cwd=cwd, check=True, shell=True)
+        cmd_str = " ".join(cmd_list)
+        full_cmd = f"{vcvars_prefix}{vulkan_env_prefix}{cmd_str}"
+        subprocess.run(full_cmd, cwd=cwd, check=True, shell=True)
+    else:
+        # macOS / Linux / WSL2
+        subprocess.run(cmd_list, cwd=cwd, check=True)
 
 
 def build_llama_from_source(backend: str = "cuda", all_targets: bool = False) -> None:
     cmake_flags = ["cmake", "-B", "build", "-DBUILD_SHARED_LIBS=OFF"]
 
-    if backend == "cuda":
-        cmake_flags.append("-DGGML_CUDA=ON")
-        info("Configuring CMake for CUDA build...")
-    elif backend == "vulkan":
-        cmake_flags.append("-DGGML_VULKAN=ON")
-        info("Configuring CMake for Vulkan build...")
-    elif backend in ["hybrid", "cuda+vulkan"]:
-        cmake_flags.extend(["-DGGML_CUDA=ON", "-DGGML_VULKAN=ON"])
-        info("Configuring CMake for Hybrid (CUDA + Vulkan) build...")
-    else:
-        raise ValueError(f"Unknown backend: {backend}")
+    if CURRENT_OS == "macos":
+        cmake_flags.append("-DGGML_METAL=ON")
+        info("Configuring CMake for macOS Apple Silicon Metal build...")
+    elif CURRENT_OS in ["linux", "wsl2"]:
+        if backend == "cuda":
+            cmake_flags.append("-DGGML_CUDA=ON")
+            info("Configuring CMake for Linux/WSL2 CUDA build...")
+        elif backend == "vulkan":
+            cmake_flags.append("-DGGML_VULKAN=ON")
+            info("Configuring CMake for Linux/WSL2 Vulkan build...")
+        else:
+            info("Configuring CMake for Linux/WSL2 CPU build...")
+    else: # Windows
+        if backend == "cuda":
+            cmake_flags.append("-DGGML_CUDA=ON")
+            info("Configuring CMake for Windows CUDA build...")
+        elif backend == "vulkan":
+            cmake_flags.append("-DGGML_VULKAN=ON")
+            info("Configuring CMake for Windows Vulkan build...")
+        elif backend in ["hybrid", "cuda+vulkan"]:
+            cmake_flags.extend(["-DGGML_CUDA=ON", "-DGGML_VULKAN=ON"])
+            info("Configuring CMake for Windows Hybrid (CUDA + Vulkan) build...")
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
 
     run_cmake_cmd(cmake_flags, cwd=SOURCE_DIR)
 
@@ -831,10 +1027,14 @@ def build_llama_from_source(backend: str = "cuda", all_targets: bool = False) ->
         targets.extend(["llama-cli", "llama-mtmd-cli", "llama-gguf-split"])
 
     info(f"Building targets: {', '.join(targets)}...")
-    run_cmake_cmd(
-        ["cmake", "--build", "build", "--config", "Release", "-j", "--target"] + targets,
-        cwd=SOURCE_DIR
-    )
+    if CURRENT_OS == "windows":
+        run_cmake_cmd(
+            ["cmake", "--build", "build", "--config", "Release", "-j", "--target"] + targets,
+            cwd=SOURCE_DIR
+        )
+    else:
+        for t in targets:
+            run_cmake_cmd(["cmake", "--build", "build", "--config", "Release", "-j", "--target", t], cwd=SOURCE_DIR)
 
     info("Copying built binaries to bin/...")
     BIN_DIR.mkdir(exist_ok=True)
@@ -843,13 +1043,25 @@ def build_llama_from_source(backend: str = "cuda", all_targets: bool = False) ->
         release_bin_dir = SOURCE_DIR / "build" / "bin"
 
     copied = 0
-    for ext in ["*.exe", "*.dll", "*.spv"]:
-        for file_path in release_bin_dir.glob(ext):
-            shutil.copy2(file_path, BIN_DIR / file_path.name)
-            copied += 1
+    for file_path in release_bin_dir.glob("*"):
+        if file_path.is_file():
+            # Check if matching binary
+            is_bin = file_path.suffix in [".exe", ".dll", ".dylib", ".so", ".spv"]
+            if CURRENT_OS != "windows" and not file_path.suffix and file_path.name.startswith("llama-"):
+                is_bin = True
+
+            if is_bin:
+                dest = BIN_DIR / file_path.name
+                shutil.copy2(file_path, dest)
+                if CURRENT_OS != "windows":
+                    try:
+                        dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                    except Exception:
+                        pass
+                copied += 1
 
     if copied == 0:
-        warn("No .exe or .dll files were found to copy!")
+        warn("No binary files were found to copy!")
     else:
         ok(f"Copied {copied} binaries/assets successfully.")
 
@@ -866,16 +1078,23 @@ def update_via_build(
     if not diag["git"]:
         err("Git is required to pull source code. Please install Git.")
         sys.exit(1)
-    if not diag["vcvars"]:
-        err("Visual Studio C++ Build Tools (vcvars64.bat) not found. Required to compile C++ on Windows.")
+    if not diag["c_compiler"]:
+        if CURRENT_OS == "macos":
+            err("Xcode Command Line Tools not found. Please run: xcode-select --install")
+        elif CURRENT_OS in ["linux", "wsl2"]:
+            err("GCC/Clang C++ compiler not found. Please install build-essential.")
+        else:
+            err("Visual Studio C++ Build Tools (vcvars64.bat) not found. Required to compile C++ on Windows.")
         sys.exit(1)
-    if backend in ["cuda", "hybrid"] and not diag["cuda_nvcc"]:
-        err("NVIDIA CUDA Toolkit (nvcc) not found. Required for CUDA & Hybrid source builds.")
-        sys.exit(1)
-    if backend in ["vulkan", "hybrid"] and not diag["vulkan_sdk"]:
-        err("LunarG Vulkan SDK (glslc) not found. Required to compile Vulkan compute shaders from source.")
-        _print_safe(f"  {Col.CYAN}-> Install via winget: winget install KhronosGroup.VulkanSDK{Col.RESET}")
-        sys.exit(1)
+
+    if CURRENT_OS in ["linux", "wsl2", "windows"]:
+        if backend in ["cuda", "hybrid"] and not diag["cuda_nvcc"]:
+            err("NVIDIA CUDA Toolkit (nvcc) not found. Required for CUDA & Hybrid source builds.")
+            sys.exit(1)
+        if CURRENT_OS == "windows" and backend in ["vulkan", "hybrid"] and not diag["vulkan_sdk"]:
+            err("LunarG Vulkan SDK (glslc) not found. Required to compile Vulkan compute shaders from source on Windows.")
+            _print_safe(f"  {Col.CYAN}-> Install via winget: winget install KhronosGroup.VulkanSDK{Col.RESET}")
+            sys.exit(1)
 
     installed_ver = get_installed_version()
     installed_sha = clean_version_tag(installed_ver)
@@ -893,7 +1112,8 @@ def update_via_build(
         return
 
     new_tag = git_get_closest_tag(SOURCE_DIR, new_sha) or "unknown"
-    backend_label = backend.upper()
+    effective_backend = "metal" if CURRENT_OS == "macos" else backend
+    backend_label = effective_backend.upper()
     print(f"\n  {Col.BOLD}Building Commit: {Col.GREEN}{new_sha[:7]}{Col.RESET} (release {new_tag}+) [{backend_label}]")
     if installed_sha:
         installed_tag = git_get_closest_tag(SOURCE_DIR, installed_sha) or "unknown"
@@ -923,7 +1143,7 @@ def update_via_build(
             rollback()
         sys.exit(1)
 
-    save_build_info(new_sha, mode="build", backend=backend)
+    save_build_info(new_sha, mode="build", backend=effective_backend)
 
     # Capture help after & diff
     if not no_diff:
@@ -953,10 +1173,10 @@ def update_via_build(
 
 def interactive_wizard() -> Tuple[str, str]:
     """Interactively guides the user through selecting installation method and GPU backend."""
-    print(f"\n{Col.BOLD}=== Engine Setup & Backend Selection ==={Col.RESET}")
+    print(f"\n{Col.BOLD}=== Engine Setup & Backend Selection ({CURRENT_OS.upper()}) ==={Col.RESET}")
     print(f"1. Select Installation Method:")
-    print(f"  {Col.CYAN}[1]{Col.RESET} Lazy Mode: Download precompiled release (Fast, no compiler needed ⭐)")
-    print(f"  {Col.CYAN}[2]{Col.RESET} Source Build: Compile latest master with CMake + MSVC (Maximum optimization)")
+    print(f"  {Col.CYAN}[1]{Col.RESET} Lazy Mode: Download precompiled release (Fast, zero compiler needed ⭐)")
+    print(f"  {Col.CYAN}[2]{Col.RESET} Source Build: Compile latest master with CMake (Maximum optimization)")
 
     while True:
         m_choice = input("\nChoose [1-2] (default 1): ").strip() or "1"
@@ -964,7 +1184,23 @@ def interactive_wizard() -> Tuple[str, str]:
             break
     mode = "release" if m_choice == "1" else "build"
 
+    if CURRENT_OS == "macos":
+        print(f"\n2. GPU Backend: {Col.GREEN}Apple Metal (Native M-Series GPU ⭐){Col.RESET}")
+        return mode, "metal"
+
     print(f"\n2. Select GPU Backend:")
+    if CURRENT_OS in ["linux", "wsl2"]:
+        print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU ⭐)")
+        print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Universal GPU)")
+        print(f"  {Col.CYAN}[3]{Col.RESET} CPU (AVX2 / OpenMP)")
+        while True:
+            b_choice = input("\nChoose [1-3] (default 1): ").strip() or "1"
+            if b_choice in ["1", "2", "3"]:
+                break
+        backend = {"1": "cuda", "2": "vulkan", "3": "cpu"}[b_choice]
+        return mode, backend
+
+    # Windows
     print(f"  {Col.CYAN}[1]{Col.RESET} CUDA (NVIDIA GPU ⭐)")
     print(f"  {Col.CYAN}[2]{Col.RESET} Vulkan (Intel Arc / AMD / Universal)")
     if mode == "build":
@@ -976,8 +1212,7 @@ def interactive_wizard() -> Tuple[str, str]:
         if b_choice in ["1", "2", "3"] and (mode == "build" or b_choice != "3"):
             break
 
-    backend_map = {"1": "cuda", "2": "vulkan", "3": "hybrid"}
-    backend = backend_map[b_choice]
+    backend = {"1": "cuda", "2": "vulkan", "3": "hybrid"}[b_choice]
     return mode, backend
 
 

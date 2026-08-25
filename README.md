@@ -1,6 +1,6 @@
 # llabrun — Llama.cpp Lab Builder & Runner
 
-A production-tuned local LLM orchestration, building, and benchmarking suite built on `llama.cpp`. Designed for deterministic layer offloading, micro-batch memory optimization, direct RAM loading, speculative decoding (MTP), and instant portability across any hardware (NVIDIA, Intel Arc, AMD) via declarative model presets.
+A production-tuned local LLM orchestration, building, and benchmarking suite built on `llama.cpp`. Designed for deterministic layer offloading, micro-batch memory optimization, direct RAM loading, speculative decoding (MTP), and instant cross-platform portability across **macOS (Apple Silicon Metal)**, **Linux / WSL2 (CUDA & Vulkan)**, and **Windows (CUDA, Vulkan, Hybrid)** via declarative model presets.
 
 ---
 
@@ -8,34 +8,35 @@ A production-tuned local LLM orchestration, building, and benchmarking suite bui
 
 *   **Zero-Overhead Runner CLI ([llama_runner.py](llama_runner.py)):** Interactive model selector, benchmark orchestrator, and Router INI preset generator.
 *   **Modular Presets Configuration ([presets.json](presets.json)):** Declarative favorite models and verified presets decoupled from code for instant portability across different hardware and VRAM budgets.
-*   **Multi-Backend Engine Updater ([update_llama.py](update_llama.py)):**
-    *   **Lazy Mode (`--download`):** Instant download of official precompiled GitHub releases (CUDA or Vulkan). Zero compiler or CUDA toolkit prerequisites (runs directly on GPU drivers).
-    *   **Full Optimized Mode (`--build`):** Bleeding-edge master compilation with CMake + MSVC supporting **CUDA (NVIDIA)**, **Vulkan (Intel Arc / AMD / Universal)**, or **Hybrid (CUDA + Vulkan)** dual-backend builds.
-    *   **Automated `--help` Option Diffing & Categorized Changelogs:** Instant visibility into new upstream features, Vulkan/CUDA optimizations, and fixes.
-*   **Micro-Batch Optimization (`--ubatch-size 512`):** Cuts CUDA compute graph buffer from 879MB to 215MB, recovering **+664MB pure VRAM** while maintaining 805–886 t/s prompt prefill speed.
-*   **Deterministic Layer Offloading (`-ngl <N>`):** Replaces brittle auto-fit with calibrated layer allocations for 100% stable startup immune to desktop VRAM fluctuations.
-*   **Direct Physical RAM Loading (`--load-mode none`):** Completely bypasses OS mmap disk paging, eliminating runtime page faults, SSD wear, and MoE CPU tensor latency.
+*   **Cross-Platform Engine Updater ([update_llama.py](update_llama.py)):**
+    *   **macOS (Apple Silicon M1–M4):** Automatic Apple Metal acceleration (both Lazy precompiled releases and source builds via Apple Clang).
+    *   **Linux & WSL2:** NVIDIA CUDA Toolkit compilation, Vulkan compute, and CPU OpenMP acceleration.
+    *   **Windows:** Dual-backend Hybrid (CUDA + Vulkan), standalone CUDA (NVIDIA), or standalone Vulkan (Intel Arc / AMD).
+    *   **Lazy Mode (`--download`):** Instant download of official precompiled GitHub releases (`.zip` on Windows, `.tar.gz` on macOS/Linux).
+    *   **Full Optimized Mode (`--build`):** Master branch source compilation with CMake + native compilers (`clang` on macOS, `gcc` on Linux, `MSVC` on Windows).
+    *   **Automated `--help` Option Diffing & Categorized Changelogs:** Instant visibility into upstream changes.
+*   **Micro-Batch Optimization (`--ubatch-size 512`):** Recovers **+664MB pure VRAM** while maintaining blisteringly fast prompt prefill.
+*   **Deterministic Layer Offloading (`-ngl <N>`):** Calibrated layer allocations for 100% stable startup immune to desktop VRAM fluctuations.
+*   **Direct Physical RAM Loading (`--load-mode none`):** Completely bypasses OS disk paging, eliminating page faults, SSD wear, and MoE CPU tensor latency.
 *   **Multi-Turn Memory Containment (`--cache-ram 0`, `--ctx-checkpoints 4`, `--context-shift`):** Prevents slot memory ballooning and provides smooth context rolling.
 *   **Native Multi-Token Prediction (MTP):** Speculative draft verification accelerating text generation speeds up to **145–203 tokens/sec**.
 
 ---
 
-## 💻 System Requirements & Prerequisites
+## 💻 Cross-Platform Requirements & Prerequisites
 
-On a new system, toolchain dependencies (**Python 3.14, uv, CMake, Ninja**) are managed automatically by **[`mise`](mise.toml)** with a single command: `mise install`.
+On any platform, toolchain dependencies (**Python 3.14, uv, CMake, Ninja**) are managed automatically by **[`mise`](mise.toml)** with a single command: `mise install`.
 
-| Requirement | Required to **Run** (`llama_runner.py`) | Required to **Lazy Update** (`update_llama.py --download`) | Required to **Source Build** (`update_llama.py --build`) | Provisioned By |
-| :--- | :---: | :---: | :---: | :--- |
-| **`mise` CLI** | ✅ Yes | ✅ Yes | ✅ Yes | [mise.jdx.dev](https://mise.jdx.dev) (auto-provisions Python 3.14, `uv`, `cmake`, `ninja`) |
-| **GPU Display Driver** | ✅ Yes (NVIDIA or Intel/AMD) | ✅ Yes | ✅ Yes | GPU Vendor / Windows Update (CUDA & Vulkan runtimes) |
-| **Visual Studio Build Tools** | ❌ No | ❌ No | ✅ Yes (`vcvars64.bat` / MSVC C++) | [VS Build Tools](https://aka.ms/vs/17/release/vs_BuildTools.exe) (Desktop C++) |
-| **NVIDIA CUDA Toolkit** | ❌ No | ❌ No | ⚠️ Only for CUDA/Hybrid builds | [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads) (*Not needed for pure Vulkan builds*) |
-| **LunarG Vulkan SDK** | ❌ No | ❌ No | ⚠️ Only for Vulkan/Hybrid builds | `winget install KhronosGroup.VulkanSDK` (*Not needed for Lazy Mode*) |
-| **Git** | ❌ No | ❌ No | ✅ Yes | Git for Windows / mise |
+| Platform | Primary Acceleration | Lazy Mode (Zero SDK) | Source Build Toolchain |
+| :--- | :---: | :--- | :--- |
+| **macOS (Apple Silicon)** | **Apple Metal** ⚡ | `llama-b*-bin-macos-arm64.tar.gz` | Apple Clang (`xcode-select --install`) |
+| **Linux & WSL2** | **CUDA** ⚡ / **Vulkan** | `llama-b*-bin-ubuntu-vulkan-x64.tar.gz` | GCC / G++ + CMake + NVIDIA CUDA Toolkit |
+| **Windows** | **CUDA** / **Vulkan** / **Hybrid** ⚡ | `llama-b*-bin-win-*-x64.zip` | Visual Studio MSVC (`vcvars64.bat`) + CUDA / Vulkan SDKs |
 
 > 💡 **New System Quickstart:**
-> 1. Run `mise install` (installs Python, uv, CMake, and Ninja into project environment).
+> 1. Run `mise install` (installs Python, uv, CMake, and Ninja).
 > 2. Run `uv run update_llama.py --doctor` to verify your environment.
+> 3. Run `mise run update` (or `uv run update_llama.py`) to install your engine.
 
 ---
 
