@@ -192,12 +192,24 @@ def load_settings(settings_path: Optional[Path] = None) -> Dict[str, Any]:
         }
     }
 
-    candidates = [settings_path] if settings_path else [Path('settings.json'), Path('settings.example.json')]
+    script_dir = Path(__file__).resolve().parent
+    candidates = [settings_path] if settings_path else [
+        Path('settings.json'),
+        script_dir / 'settings.json',
+        Path('settings.example.json'),
+        script_dir / 'settings.example.json'
+    ]
     for cand in candidates:
         if cand and cand.exists():
             try:
                 data = json.loads(cand.read_text(encoding='utf-8'))
-                return deep_merge(default_settings, data)
+                res = deep_merge(default_settings, data)
+                if 'server' in res and 'port' in res['server']:
+                    try:
+                        res['server']['port'] = int(res['server']['port'])
+                    except (ValueError, TypeError):
+                        pass
+                return res
             except Exception as e:
                 log(f"Warning: Failed to load settings from {cand}: {e}")
     return default_settings
@@ -1836,7 +1848,7 @@ def main() -> int:
     srv_cfg = settings.get('server', {})
     paths_cfg = settings.get('paths', {})
 
-    default_port = srv_cfg.get('port', 8080)
+    default_port = int(srv_cfg.get('port', 8080))
     default_models_dir = paths_cfg.get('models_dir', str(Path.cwd() / 'models'))
     default_presets_file = paths_cfg.get('presets_file', str(Path.cwd() / 'presets.json'))
     default_out_dir = paths_cfg.get('bench_results_dir', str(Path.cwd() / 'bench-results'))
