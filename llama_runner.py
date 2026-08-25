@@ -191,7 +191,7 @@ def load_runner_config(config_path: Optional[Path] = None, settings: Optional[Di
         'presets': []
     }
 
-    candidates = [config_path] if config_path else [Path('presets.json'), Path('presets.example.json')]
+    candidates = [config_path] if config_path else [Path('presets.json')]
     for cand in candidates:
         if cand and cand.exists():
             try:
@@ -1469,18 +1469,13 @@ def build_verified_presets(families: List[Dict[str, Any]], models_root: Path, pr
             return fam, fam['variants'][0]
         return fam, None
 
-    if presets_path is None or not presets_path.exists():
+    if presets_path is None:
         if (models_root.parent / 'presets.json').exists():
             presets_path = models_root.parent / 'presets.json'
-        elif (models_root.parent / 'presets.example.json').exists():
-            presets_path = models_root.parent / 'presets.example.json'
         elif Path('presets.json').exists():
             presets_path = Path('presets.json')
-        else:
-            presets_path = Path('presets.example.json')
 
-    if not presets_path.exists():
-        log(f"Presets configuration file not found at: {presets_path}")
+    if presets_path is None or not presets_path.exists():
         return presets
 
     config = load_runner_config(presets_path)
@@ -1846,29 +1841,50 @@ def main() -> int:
         return download_models_interactive(models_root)
 
     if action == 'preset':
-        presets = build_verified_presets(families, models_root, presets_path=presets_file)
-        if not presets:
-            print("No verified models discovered under models/ folder.")
-            return 1
-            
-        print("\n======================= VERIFIED 1-CLICK PRESETS (100% GPU) =======================")
-        for idx, p in enumerate(presets, start=1):
-            print(f"[{idx}] {p['label']}")
-        print("==================================================================================")
-        
-        while True:
-            choice = input(f"Choose preset [1-{len(presets)}]: ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(presets):
-                selected_preset = presets[int(choice) - 1]
-                break
+        active_presets_file = presets_file if (presets_file and presets_file.exists()) else Path('presets.json')
+        if not active_presets_file.exists():
+            print("\n[!] No active 'presets.json' file found.")
+            print("Verified 1-Click Presets are optional hardware-specific profiles (e.g. 16GB RTX reference picks).")
+            print("\nOptions:")
+            print("  [1] Copy & activate 16GB Reference Profile (presets.example.json -> presets.json)")
+            print("  [2] Start Server with Interactive Setup (Auto GPU layer offload / Any hardware ⭐)")
+            p_choice = input("\nChoose [1-2] (default 2): ").strip() or "2"
+            if p_choice == "1":
+                if Path('presets.example.json').exists():
+                    shutil.copy2('presets.example.json', 'presets.json')
+                    print("  ✅ Created presets.json from presets.example.json")
+                    presets_file = Path('presets.json')
+                else:
+                    print("  [!] presets.example.json not found.")
+                    action = 'start'
+            else:
+                action = 'start'
+
+        if action == 'preset':
+            presets = build_verified_presets(families, models_root, presets_path=presets_file)
+            if not presets:
+                print("\n[!] No models in models/ folder match the active presets.")
+                print("Switching to custom model launcher...\n")
+                action = 'start'
+            else:
+                print("\n======================= VERIFIED 1-CLICK PRESETS =======================")
+                for idx, p in enumerate(presets, start=1):
+                    print(f"[{idx}] {p['label']}")
+                print("========================================================================")
                 
-        print('\nEnable Prompt Logging?')
-        print('[1] No (default)')
-        print(f'[2] Yes (to {Path.cwd() / "prompt_logs"})')
-        log_choice = input('Choose [1] or [2] (default 1): ').strip()
-        log_prompts_dir = str(Path.cwd() / "prompt_logs") if log_choice == '2' else None
-        
-        return start_server(server_path, selected_preset['cfg'], args.base_port, out_dir, log_prompts_dir)
+                while True:
+                    choice = input(f"Choose preset [1-{len(presets)}]: ").strip()
+                    if choice.isdigit() and 1 <= int(choice) <= len(presets):
+                        selected_preset = presets[int(choice) - 1]
+                        break
+                        
+                print('\nEnable Prompt Logging?')
+                print('[1] No (default)')
+                print(f'[2] Yes (to {Path.cwd() / "prompt_logs"})')
+                log_choice = input('Choose [1] or [2] (default 1): ').strip()
+                log_prompts_dir = str(Path.cwd() / "prompt_logs") if log_choice == '2' else None
+                
+                return start_server(server_path, selected_preset['cfg'], args.base_port, out_dir, log_prompts_dir)
 
     if action == 'router':
         print(f'\n2. Router Preset Mode')
