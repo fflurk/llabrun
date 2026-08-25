@@ -7,7 +7,7 @@ A production-tuned local LLM orchestration, building, and benchmarking suite bui
 ## 🚀 Key Features
 
 *   **Zero-Overhead Runner CLI ([llama_runner.py](llama_runner.py)):** Interactive model selector, benchmark orchestrator, and Router INI preset generator.
-*   **Modular Presets Configuration ([presets.json](presets.json)):** Declarative favorite models and verified presets decoupled from code for instant portability across different hardware and VRAM budgets.
+*   **Modular Presets Configuration ([presets.example.json](presets.example.json)):** Declarative favorite models and verified presets decoupled from code for instant portability across different hardware and VRAM budgets.
 *   **Cross-Platform Engine Updater ([update_llama.py](update_llama.py)):**
     *   **macOS (Apple Silicon M1–M4):** Automatic Apple Metal acceleration (both Lazy precompiled releases and source builds via Apple Clang).
     *   **Linux & WSL2:** NVIDIA CUDA Toolkit compilation, Vulkan compute, and CPU OpenMP acceleration.
@@ -42,7 +42,7 @@ On any platform, toolchain dependencies (**Python 3.14, uv, CMake, Ninja**) are 
 
 ## 📊 Reference Performance Matrix (16GB VRAM Example Profile)
 
-> 💡 **Hardware Adaptation:** The benchmarks below illustrate verified real-world performance on a reference **16GB GPU (NVIDIA RTX 5060 Ti + 48GB DDR5 Host RAM)**. To calibrate for other systems (e.g. 24GB RTX 3090/4090, Intel Arc 140T, or 8GB laptops), adjust the layer offload count (`ngl`) and context limits in [`presets.json`](presets.json).
+> 💡 **Hardware Adaptation:** The benchmarks below illustrate verified real-world performance on a reference **16GB GPU (NVIDIA RTX 5060 Ti + 48GB DDR5 Host RAM)**. To calibrate for other systems (e.g. 24GB RTX 3090/4090, Intel Arc 140T, or 8GB laptops), adjust the layer offload count (`ngl`) and context limits in [`presets.example.json`](presets.example.json) or your custom `presets.json`.
 
 | Base Model & Quant | Context | Vision | MTP Speculative | Layers in GPU | GPU VRAM | Host DDR5 RAM | Real Generation Speed | Notes / Recommendation |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
