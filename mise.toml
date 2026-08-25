@@ -1,0 +1,30 @@
+[tools]
+python = "3.14"
+uv = "latest"
+cmake = "latest"
+ninja = "latest"
+pi = "latest"
+
+[tasks.serve]
+description = "Launch interactive model runner and OpenAI-compatible API server"
+run = "uv run python llama_runner.py"
+
+[tasks.update]
+description = "Update llama.cpp engine via Lazy Mode precompiled release download"
+run = "uv run python update_llama.py --download"
+
+[tasks.build]
+description = "Compile llama.cpp from source with CMake + MSVC + CUDA"
+run = "uv run python update_llama.py --build"
+
+[tasks.doctor]
+description = "Run system toolchain diagnostics and prerequisite check"
+run = "uv run python update_llama.py --doctor"
+
+[tasks.rollback]
+description = "Roll back to previous binary backup"
+run = "uv run python update_llama.py --rollback"
+
+[tasks.download]
+description = "Download GGUF models directly from HuggingFace Hub into models/"
+run = "uv run --with huggingface_hub python llama_runner.py --download"

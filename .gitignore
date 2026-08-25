@@ -1,0 +1,34 @@
+# Compiled binaries & build outputs
+/bin/
+/bin_backup/
+
+# Upstream source repo (managed via update_llama.py)
+/Source/
+
+# Model weights & large binaries
+/models/
+*.gguf
+*.bin
+
+# Runtime logs & benchmark outputs
+/bench-results/
+/prompt_logs/
+*.log
+bench_*.json
+deep_context_*.json
+
+# Generated router configurations
+router.ini
+
+# Python & environment
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+.env
+
+# Editor & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": 1,
+  "description": "Unified configuration for llama.cpp runner: server defaults, family baseline parameters, system prompts, and 1-click model presets.",
+  "defaults": {
+    "server": {
+      "host": "127.0.0.1",
+      "ui": false,
+      "metrics": true,
+      "slots_endpoint": true,
+      "timeout": 600,
+      "verbosity": 4,
+      "predict": -1
+    },
+    "engine": {
+      "cache_type_k": "q4_0",
+      "cache_type_v": "q4_0",
+      "flash_attn": "on",
+      "threads": 8,
+      "threads_batch": 8,
+      "batch_size": 2048,
+      "ubatch_size": 512,
+      "cache_ram": 0,
+      "ctx_checkpoints": 4,
+      "context_shift": true,
+      "reasoning": "on",
+      "reasoning_budget": 8192,
+      "temp": 0.7,
+      "top_p": 0.95,
+      "top_k": 40,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "repeat_penalty": 1.0,
+      "load_mode": "none"
+    }
+  },
+  "reasoning_prefixes": {
+    "Low": "Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.\n\n",
+    "High": "Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\n\n"
+  },
+  "families": {
+    "Gemma": {
+      "system_prompt": "You are Gemma, a large language model created by Google.",
+      "template_file": "chat_template_gemma.jinja",
+      "sampling": {
+        "temp": 0.6,
+        "top_p": 0.95,
+        "top_k": 20
+      },
+      "vision_engine_overrides": {
+        "image_min_tokens": 560,
+        "image_max_tokens": 1120,
+        "mtmd_batch_max_tokens": 1120,
+        "ubatch_size": 2048
+      },
+      "reasoning_budget_message": "\nI will now provide my response.\n\n"
+    },
+    "Qwen": {
+      "system_prompt": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+      "template_file": "chat_template_qwen.jinja",
+      "sampling": {
+        "temp": 0.6,
+        "top_p": 0.95,
+        "top_k": 20
+      },
+      "vision_engine_overrides": {
+        "image_min_tokens": 1024,
+        "image_max_tokens": 1024,
+        "mtmd_batch_max_tokens": 1024,
+        "ubatch_size": 2048
+      },
+      "reasoning_budget_message": "\n\n",
+      "auto_disable_thinking_with_tools": false,
+      "non_thinking_presence_penalty": 1.5
+    },
+    "Muse": {
+      "system_prompt": "You are a helpful AI assistant.",
+      "sampling": {
+        "temp": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.01
+      }
+    },
+    "Nemotron": {
+      "system_prompt": "You are a helpful AI assistant.",
+      "sampling": {
+        "temp": 0.6,
+        "top_p": 0.95,
+        "min_p": 0.01
+      }
+    },
+    "Generic": {
+      "system_prompt": "You are a helpful assistant.",
+      "sampling": {
+        "temp": 0.7,
+        "top_p": 0.95,
+        "top_k": 40
+      }
+    }
+  },
+  "presets": [
+    {
+      "id": "qwen3.6-35b-256k-vis",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "🚀 Qwen 3.6 (35B MoE) [{variant}] - 256k Full Ctx + Vision (GPU) + MTP (n=1) -> 53.2 t/s (100% GPU) ⭐",
+      "match_family": "35b-a3b",
+      "preferred_quants": ["IQ3_XXS", "APEX-Compact", "MXFP4"],
+      "context": "256k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=1)"
+    },
+    {
+      "id": "qwen3.6-35b-256k-text",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "📚 Qwen 3.6 (35B MoE) [{variant}] - 256k Full Ctx (Text) + MTP (n=1) -> 78.0 t/s (100% GPU)",
+      "match_family": "35b-a3b",
+      "preferred_quants": ["IQ3_XXS", "APEX-Compact", "MXFP4"],
+      "context": "256k",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=1)"
+    },
+    {
+      "id": "gemma4-12b-256k-vis",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "⚡ Gemma 4 (12B) [{variant}] - 256k Full Ctx + Vision + MTP (n=4) -> 106.1 t/s (100% GPU, <9.4GB) ⭐",
+      "match_family": "12B",
+      "preferred_quants": ["Q4_K_XL", "UD"],
+      "context": "256k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "temp_profile": "High (1.0)",
+      "mtp": "MTP (draft-mtp, n=4)",
+      "draft_model_pattern": "mtp-gemma-4-12B-it.gguf"
+    },
+    {
+      "id": "muse-glimmer-30b-262k-text",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "🛠️ Muse Glimmer (30B) [{variant}] - #1 MCP & DeepSearch: 262k Full Native Ctx -> 25.9 t/s (100% GPU) ⭐",
+      "match_family": "Muse",
+      "preferred_quants": ["Q3_K_XL", "UD", "Q4"],
+      "context": "262k",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "Off (Standard)"
+    },
+    {
+      "id": "nemotron-30b-256k-text",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "🛸 Nemotron 3.5 (30B MoE) [{variant}] - 256k Extreme Context + MTP (n=1) -> 55.6 t/s (100% GPU)",
+      "match_family": "Nemotron",
+      "preferred_quants": ["Q4_K_XL", "UD", "A3B"],
+      "context": "256k",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=1)"
+    },
+    {
+      "id": "nemotron-30b-1m-text",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "🌌 Nemotron 3.5 (30B MoE) [{variant}] - 1 Million Context: 1024k Ctx (MTP Off) -> 46.4 t/s (100% GPU) 🚀",
+      "match_family": "Nemotron",
+      "preferred_quants": ["Q4_K_XL", "UD", "A3B"],
+      "context": "1M",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "Off (Standard)"
+    },
+    {
+      "id": "qwen3.8-27b-128k-gpu-vis",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "🖼️ Qwen 3.8 (27B) [{variant}] - Max GPU Vision: 128k Ctx + Fast GPU Vision (MTP Off) -> 32.4 t/s (100% GPU) ⭐",
+      "match_family": "Qwen3.8",
+      "preferred_quants": ["IQ3_XXS", "IQ3_S", "Q3_K_XL"],
+      "context": "128k",
+      "vision": "GPU",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "Off (Standard)",
+      "engine_overrides": {
+        "ngl": 66
+      }
+    },
+    {
+      "id": "qwen3.8-27b-200k-max-dense",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "📚 Qwen 3.8 (27B) [{variant}] - Max Dense Window: 200k Ctx + Hybrid Vision (MTP Off) -> 32.4 t/s (100% GPU) ⭐",
+      "match_family": "Qwen3.8",
+      "preferred_quants": ["IQ3_XXS", "IQ3_S", "Q3_K_XL"],
+      "context": "200k",
+      "vision": "CPU",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "Off (Standard)",
+      "engine_overrides": {
+        "ngl": 66
+      }
+    },
+    {
+      "id": "qwen3.8-27b-256k-full-nkvo",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "🌌 Qwen 3.8 (27B) [{variant}] - Full 256k Window: 256k Ctx + Host RAM KV (-nkvo) + MTP (n=1) -> 16.8 t/s 🚀",
+      "match_family": "Qwen3.8",
+      "preferred_quants": ["IQ3_XXS", "IQ3_S", "Q3_K_XL"],
+      "context": "256k",
+      "vision": "GPU",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=1)",
+      "engine_overrides": {
+        "ngl": 66,
+        "no_kv_offload": true
+      }
+    },
+    {
+      "id": "gemma4-26b-128k-vis",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "⚡ Gemma 4 (26B) [{variant}] - 128k Native Ctx + Vision (GPU) -> 77.3 t/s (100% GPU, 15.3GB)",
+      "match_family": "26B",
+      "preferred_quants": ["A4B", "E4B", "Q4_K_XL"],
+      "context": "128k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "temp_profile": "High (1.15)",
+      "mtp": "Off (Standard)"
+    },
+    {
+      "id": "gemma4-26b-128k-text",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "⚡ Gemma 4 (26B) [{variant}] - 128k Native Ctx (Text) + MTP (n=1) -> 125.4 t/s (100% GPU, 14.7GB)",
+      "match_family": "26B",
+      "preferred_quants": ["A4B", "E4B", "Q4_K_XL"],
+      "context": "128k",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "temp_profile": "High (1.15)",
+      "mtp": "MTP (draft-mtp, n=1)",
+      "draft_model_pattern": "mtp-gemma-4-26B-A4B-it.gguf"
+    },
+    {
+      "id": "gemma4-e4b-128k-vis",
+      "category": "Agentic Long-Context (128k - 262k)",
+      "label": "⚡ Gemma 4 (E4B) [{variant}] - 128k Native Ctx + Vision + MTP (n=4) -> 203.3 t/s (100% GPU, 4.3GB VRAM) 🛸",
+      "match_family": "E4B",
+      "preferred_quants": ["Q4_K_XL", "UD"],
+      "context": "128k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=4)",
+      "draft_model_pattern": "mtp-gemma-4-E4B-it.gguf"
+    },
+    {
+      "id": "gemma4-26b-65k-turbo",
+      "category": "Interactive Low-Latency (65k)",
+      "label": "👑 Gemma 4 (26B) [{variant}] - Turbo Max Speed Text: 65k Ctx + MTP (n=2) -> 145.4 t/s (100% GPU) 🛸",
+      "match_family": "26B",
+      "preferred_quants": ["A4B", "E4B", "Q4_K_XL"],
+      "context": "65k",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "temp_profile": "High (1.15)",
+      "mtp": "MTP (draft-mtp, n=2)",
+      "draft_model_pattern": "mtp-gemma-4-26B-A4B-it.gguf"
+    },
+    {
+      "id": "qwen3.6-35b-65k-turbo",
+      "category": "Interactive Low-Latency (65k)",
+      "label": "👑 Qwen 3.6 (35B MoE) [{variant}] - Turbo Max Speed Text: 65k Ctx + MTP (n=2) -> 125.5 t/s (100% GPU)",
+      "match_family": "35b-a3b",
+      "preferred_quants": ["IQ3_XXS", "APEX-Compact", "MXFP4"],
+      "context": "65k",
+      "vision": "No",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=2)"
+    },
+    {
+      "id": "gemma4-26b-65k-vis",
+      "category": "Interactive Low-Latency (65k)",
+      "label": "⚡ Gemma 4 (26B) [{variant}] - Multimodal Creative Chat: 65k Ctx + Vision + MTP (n=2) -> 88.0 t/s (100% GPU)",
+      "match_family": "26B",
+      "preferred_quants": ["A4B", "E4B", "Q4_K_XL"],
+      "context": "65k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "temp_profile": "High (1.15)",
+      "mtp": "MTP (draft-mtp, n=2)",
+      "draft_model_pattern": "mtp-gemma-4-26B-A4B-it.gguf"
+    },
+    {
+      "id": "muse-glimmer-30b-65k-vis",
+      "category": "Interactive Low-Latency (65k)",
+      "label": "🖼️ Muse Glimmer (30B) [{variant}] - Multimodal Tool Calling: 65k Ctx + Vision (100% GPU) -> 27.7–28.2 t/s (OOM-Proof) ⭐",
+      "match_family": "Muse",
+      "preferred_quants": ["Q3_K_XL", "UD", "Q4"],
+      "context": "65k",
+      "vision": "auto",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "Off (Standard)",
+      "engine_overrides": {
+        "ngl": 53
+      }
+    },
+    {
+      "id": "qwen3.8-27b-96k-gpu-vis",
+      "category": "Interactive Low-Latency (65k)",
+      "label": "⚡ Qwen 3.8 (27B) [{variant}] - Daily Driver: 96k Ctx + Fast GPU Vision + MTP (n=1) -> 49.3 t/s (100% GPU) ⭐",
+      "match_family": "Qwen3.8",
+      "preferred_quants": ["IQ3_XXS", "IQ3_S", "Q3_K_XL"],
+      "context": "96k",
+      "vision": "GPU",
+      "reasoning": "Thinking (Natural / Medium - Recommended)",
+      "mtp": "MTP (draft-mtp, n=1)",
+      "engine_overrides": {
+        "ngl": 66
+      }
+    }
+  ]
+}
